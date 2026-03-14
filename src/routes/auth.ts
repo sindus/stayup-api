@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { sign } from 'hono/jwt'
 import bcrypt from 'bcryptjs'
-import { pool } from '../db/client.js'
+import type { Bindings } from '../types.js'
+import { getPool } from '../db/client.js'
 
 type User = {
   id: number
@@ -10,10 +11,11 @@ type User = {
   role: string
 }
 
-export const authRoute = new Hono()
+export const authRoute = new Hono<{ Bindings: Bindings }>()
 
 authRoute.post('/login', async (c) => {
   const body = await c.req.json<{ username: string; password: string }>()
+  const pool = getPool(c.env.DATABASE_URL)
 
   const result = await pool.query<User>('SELECT * FROM users WHERE username = $1', [body.username])
   const user = result.rows[0]
@@ -29,7 +31,7 @@ authRoute.post('/login', async (c) => {
       role: user.role,
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
     },
-    process.env.JWT_SECRET ?? 'changeme',
+    c.env.JWT_SECRET,
     'HS256',
   )
 

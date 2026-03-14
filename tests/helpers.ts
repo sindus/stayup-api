@@ -1,9 +1,15 @@
 import { sign } from 'hono/jwt'
+import type { Bindings } from '../src/types.js'
+
+export const TEST_ENV: Bindings = {
+  DATABASE_URL: 'postgres://test',
+  JWT_SECRET: 'test-secret',
+}
 
 export async function bearerToken(role: 'user' | 'admin' = 'user'): Promise<string> {
   return sign(
     { sub: '1', username: 'testuser', role, exp: Math.floor(Date.now() / 1000) + 3600 },
-    process.env.JWT_SECRET ?? 'changeme',
+    TEST_ENV.JWT_SECRET,
     'HS256',
   )
 }

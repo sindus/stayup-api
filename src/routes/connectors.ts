@@ -1,9 +1,10 @@
 import { Hono } from 'hono'
 import type { PoolClient } from 'pg'
+import type { Bindings } from '../types.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
-import { pool } from '../db/client.js'
+import { getPool } from '../db/client.js'
 
-export const connectorsRoute = new Hono()
+export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 
 connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
@@ -29,7 +30,7 @@ async function queryLatestPerProvider(client: PoolClient, table: string): Promis
 }
 
 connectorsRoute.get('/', async (c) => {
-  const client = await pool.connect()
+  const client = await getPool(c.env.DATABASE_URL).connect()
   try {
     const tables = await getConnectorTables(client)
     const data: Record<string, unknown[]> = {}
@@ -44,7 +45,7 @@ connectorsRoute.get('/', async (c) => {
 })
 
 connectorsRoute.get('/latest', async (c) => {
-  const client = await pool.connect()
+  const client = await getPool(c.env.DATABASE_URL).connect()
   try {
     const tables = await getConnectorTables(client)
     const data: Record<string, unknown[]> = {}
@@ -59,7 +60,7 @@ connectorsRoute.get('/latest', async (c) => {
 
 connectorsRoute.get('/:name', async (c) => {
   const name = c.req.param('name')
-  const client = await pool.connect()
+  const client = await getPool(c.env.DATABASE_URL).connect()
   try {
     const tableName = `connector_${name}`
     const tableCheck = await client.query<{ table_name: string }>(

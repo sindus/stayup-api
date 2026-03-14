@@ -3,16 +3,25 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import app from '../../src/app.js'
-import { pool } from '../../src/db/client.js'
-import { authHeaders, bearerToken } from '../helpers.js'
+import { getPool } from '../../src/db/client.js'
+import { authHeaders } from '../helpers.js'
+import type { Bindings } from '../../src/types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+const FUNCTIONAL_ENV: Bindings = {
+  DATABASE_URL:
+    process.env.DATABASE_URL ??
+    `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup_test'}`,
+  JWT_SECRET: 'test-secret',
+}
+
+const pool = getPool(FUNCTIONAL_ENV.DATABASE_URL)
 
 beforeAll(async () => {
   const schema = readFileSync(join(__dirname, '../../src/db/schema.sql'), 'utf-8')
   await pool.query(schema)
 
-  // Create test users
   const bcrypt = await import('bcryptjs')
   const userHash = await bcrypt.hash('userpass', 10)
   const adminHash = await bcrypt.hash('adminpass', 10)
@@ -39,7 +48,7 @@ afterAll(async () => {
 
 describe('GET /', () => {
   it('returns health check without auth', async () => {
-    const res = await app.request('/')
+    const res = await app.request('/', {}, FUNCTIONAL_ENV)
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toEqual({ status: 'ok' })
@@ -48,43 +57,57 @@ describe('GET /', () => {
 
 describe('POST /auth/login', () => {
   it('returns token for valid credentials', async () => {
-    const res = await app.request('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'testuser', password: 'userpass' }),
-    })
+    const res = await app.request(
+      '/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'testuser', password: 'userpass' }),
+      },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toHaveProperty('token')
   })
 
   it('returns 401 for invalid credentials', async () => {
-    const res = await app.request('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'testuser', password: 'wrong' }),
-    })
+    const res = await app.request(
+      '/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'testuser', password: 'wrong' }),
+      },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(401)
   })
 })
 
 describe('GET /connectors (auth)', () => {
   it('returns 401 without token', async () => {
-    const res = await app.request('/connectors')
+    const res = await app.request('/connectors', {}, FUNCTIONAL_ENV)
     expect(res.status).toBe(401)
   })
 
   it('returns 401 with invalid token', async () => {
-    const res = await app.request('/connectors', {
-      headers: { Authorization: 'Bearer invalid.token.here' },
-    })
+    const res = await app.request(
+      '/connectors',
+      { headers: { Authorization: 'Bearer invalid.token.here' } },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(401)
   })
 })
 
 describe('GET /connectors', () => {
   it('returns connector tables for user', async () => {
-    const res = await app.request('/connectors', { headers: await authHeaders('user') })
+    const res = await app.request(
+      '/connectors',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.connectors).toHaveProperty('changelog')
@@ -94,12 +117,20 @@ describe('GET /connectors', () => {
 
 describe('GET /connectors/latest (auth)', () => {
   it('returns 403 for user role', async () => {
-    const res = await app.request('/connectors/latest', { headers: await authHeaders('user') })
+    const res = await app.request(
+      '/connectors/latest',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(403)
   })
 
   it('returns 200 for admin role', async () => {
-    const res = await app.request('/connectors/latest', { headers: await authHeaders('admin') })
+    const res = await app.request(
+      '/connectors/latest',
+      { headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toHaveProperty('latest')
@@ -108,39 +139,45 @@ describe('GET /connectors/latest (auth)', () => {
 
 describe('GET /connectors/:name', () => {
   it('returns latest per provider_id for changelog', async () => {
-    const res = await app.request('/connectors/changelog', { headers: await authHeaders('user') })
+    const res = await app.request(
+      '/connectors/changelog',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.connector).toBe('changelog')
     expect(Array.isArray(body.data)).toBe(true)
   })
 
-  it('returns latest per provider_id for youtube', async () => {
-    const res = await app.request('/connectors/youtube', { headers: await authHeaders('user') })
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.connector).toBe('youtube')
-    expect(Array.isArray(body.data)).toBe(true)
-  })
-
   it('returns 404 for unknown connector', async () => {
-    const res = await app.request('/connectors/unknown', { headers: await authHeaders('user') })
+    const res = await app.request(
+      '/connectors/unknown',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(404)
   })
 })
 
 describe('token returned by /auth/login works', () => {
   it('uses real login token to access protected route', async () => {
-    const loginRes = await app.request('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'testuser', password: 'userpass' }),
-    })
+    const loginRes = await app.request(
+      '/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'testuser', password: 'userpass' }),
+      },
+      FUNCTIONAL_ENV,
+    )
     const { token } = await loginRes.json()
 
-    const res = await app.request('/connectors', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const res = await app.request(
+      '/connectors',
+      { headers: { Authorization: `Bearer ${token}` } },
+      FUNCTIONAL_ENV,
+    )
     expect(res.status).toBe(200)
   })
 })

@@ -6,8 +6,5 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     pool: 'forks',
-    env: {
-      JWT_SECRET: 'test-secret',
-    },
   },
 })

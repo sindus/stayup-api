@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import bcrypt from 'bcryptjs'
-import { pool } from '../src/db/client.js'
+import { getPool } from '../src/db/client.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -18,6 +18,12 @@ if (!['user', 'admin'].includes(role)) {
   console.error('Role must be "user" or "admin"')
   process.exit(1)
 }
+
+const connectionString =
+  process.env.DATABASE_URL ??
+  `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup'}`
+
+const pool = getPool(connectionString)
 
 const schema = readFileSync(join(__dirname, '../src/db/schema.sql'), 'utf-8')
 await pool.query(schema)
