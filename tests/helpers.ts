@@ -4,6 +4,7 @@ export async function bearerToken(role: 'user' | 'admin' = 'user'): Promise<stri
   return sign(
     { sub: '1', username: 'testuser', role, exp: Math.floor(Date.now() / 1000) + 3600 },
     process.env.JWT_SECRET ?? 'changeme',
+    'HS256',
   )
 }
 

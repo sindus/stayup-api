@@ -2,7 +2,7 @@ import { jwt } from 'hono/jwt'
 import type { Context, Next } from 'hono'
 
 export const authMiddleware = (c: Context, next: Next) =>
-  jwt({ secret: process.env.JWT_SECRET ?? 'changeme' })(c, next)
+  jwt({ secret: process.env.JWT_SECRET ?? 'changeme', alg: 'HS256' })(c, next)
 
 export const requireAdmin = async (c: Context, next: Next) => {
   const payload = c.get('jwtPayload') as { role?: string }

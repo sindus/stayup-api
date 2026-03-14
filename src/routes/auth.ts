@@ -30,6 +30,7 @@ authRoute.post('/login', async (c) => {
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
     },
     process.env.JWT_SECRET ?? 'changeme',
+    'HS256',
   )
 
   return c.json({ token })
