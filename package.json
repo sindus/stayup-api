@@ -13,7 +13,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "create-user": "tsx scripts/create-user.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js}": [
@@ -22,11 +23,13 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
+    "bcryptjs": "^3.0.3",
     "hono": "^4.6.14",
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
     "husky": "^9.1.7",

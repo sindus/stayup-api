@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS connector_youtube (
   success BOOLEAN NOT NULL
 );
 
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Unified log table
 CREATE TABLE IF NOT EXISTS log (
   id SERIAL PRIMARY KEY,

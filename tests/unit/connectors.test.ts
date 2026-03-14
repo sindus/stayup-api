@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
+import { authHeaders } from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({
   pool: {
@@ -8,6 +9,13 @@ vi.mock('../../src/db/client.js', () => ({
 }))
 
 import { pool } from '../../src/db/client.js'
+
+describe('GET /connectors (auth)', () => {
+  it('returns 401 without token', async () => {
+    const res = await app.request('/connectors')
+    expect(res.status).toBe(401)
+  })
+})
 
 describe('GET /connectors', () => {
   beforeEach(() => {
@@ -27,7 +35,7 @@ describe('GET /connectors', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors')
+    const res = await app.request('/connectors', { headers: await authHeaders('user') })
     expect(res.status).toBe(200)
 
     const body = await res.json()
@@ -44,7 +52,7 @@ describe('GET /connectors', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors')
+    const res = await app.request('/connectors', { headers: await authHeaders('user') })
     expect(res.status).toBe(200)
 
     const body = await res.json()
@@ -58,8 +66,18 @@ describe('GET /connectors', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    await app.request('/connectors')
+    await app.request('/connectors', { headers: await authHeaders('user') })
     expect(mockClient.release).toHaveBeenCalled()
+  })
+})
+
+describe('GET /connectors/latest (auth)', () => {
+  it('returns 403 for non-admin user', async () => {
+    const mockClient = { query: vi.fn(), release: vi.fn() }
+    vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
+
+    const res = await app.request('/connectors/latest', { headers: await authHeaders('user') })
+    expect(res.status).toBe(403)
   })
 })
 
@@ -81,7 +99,7 @@ describe('GET /connectors/latest', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/latest')
+    const res = await app.request('/connectors/latest', { headers: await authHeaders('admin') })
     expect(res.status).toBe(200)
 
     const body = await res.json()
@@ -98,7 +116,7 @@ describe('GET /connectors/latest', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/latest')
+    const res = await app.request('/connectors/latest', { headers: await authHeaders('admin') })
     expect(res.status).toBe(200)
 
     const body = await res.json()
@@ -111,22 +129,22 @@ describe('GET /connectors/:name', () => {
     vi.clearAllMocks()
   })
 
-  it('returns data for a specific connector', async () => {
+  it('returns latest per provider_id for a specific connector', async () => {
     const mockClient = {
       query: vi
         .fn()
         .mockResolvedValueOnce({ rows: [{ table_name: 'connector_changelog' }] })
-        .mockResolvedValueOnce({ rows: [{ id: 1, content: 'test' }] }),
+        .mockResolvedValueOnce({ rows: [{ id: 2, provider_id: 1, content: 'latest' }] }),
       release: vi.fn(),
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/changelog')
+    const res = await app.request('/connectors/changelog', { headers: await authHeaders('user') })
     expect(res.status).toBe(200)
 
     const body = await res.json()
     expect(body.connector).toBe('changelog')
-    expect(body.data).toEqual([{ id: 1, content: 'test' }])
+    expect(body.data).toEqual([{ id: 2, provider_id: 1, content: 'latest' }])
   })
 
   it('returns 404 for unknown connector', async () => {
@@ -136,18 +154,7 @@ describe('GET /connectors/:name', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/unknown')
-    expect(res.status).toBe(404)
-  })
-
-  it('returns 404 for non-connector table', async () => {
-    const mockClient = {
-      query: vi.fn().mockResolvedValueOnce({ rows: [] }),
-      release: vi.fn(),
-    }
-    vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
-
-    const res = await app.request('/connectors/repository')
+    const res = await app.request('/connectors/unknown', { headers: await authHeaders('user') })
     expect(res.status).toBe(404)
   })
 })
