@@ -38,37 +38,37 @@ describe('GET /connectors', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toHaveProperty('connectors')
-    expect(body.connectors).toHaveProperty('connector_changelog')
-    expect(body.connectors).toHaveProperty('connector_youtube')
+    expect(body.connectors).toHaveProperty('changelog')
+    expect(body.connectors).toHaveProperty('youtube')
   })
 
   it('returns empty arrays for empty connector tables', async () => {
     const res = await app.request('/connectors')
     const body = await res.json()
-    expect(Array.isArray(body.connectors.connector_changelog)).toBe(true)
-    expect(body.connectors.connector_changelog).toHaveLength(0)
+    expect(Array.isArray(body.connectors.changelog)).toBe(true)
+    expect(body.connectors.changelog).toHaveLength(0)
   })
 })
 
 describe('GET /connectors/:name', () => {
-  it('returns data for connector_changelog', async () => {
-    const res = await app.request('/connectors/connector_changelog')
+  it('returns data for changelog', async () => {
+    const res = await app.request('/connectors/changelog')
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.connector).toBe('connector_changelog')
+    expect(body.connector).toBe('changelog')
     expect(Array.isArray(body.data)).toBe(true)
   })
 
-  it('returns data for connector_youtube', async () => {
-    const res = await app.request('/connectors/connector_youtube')
+  it('returns data for youtube', async () => {
+    const res = await app.request('/connectors/youtube')
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.connector).toBe('connector_youtube')
+    expect(body.connector).toBe('youtube')
     expect(Array.isArray(body.data)).toBe(true)
   })
 
   it('returns 404 for unknown connector', async () => {
-    const res = await app.request('/connectors/connector_unknown')
+    const res = await app.request('/connectors/unknown')
     expect(res.status).toBe(404)
   })
 

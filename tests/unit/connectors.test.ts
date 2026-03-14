@@ -31,10 +31,10 @@ describe('GET /connectors', () => {
     expect(res.status).toBe(200)
 
     const body = await res.json()
-    expect(body.connectors).toHaveProperty('connector_changelog')
-    expect(body.connectors).toHaveProperty('connector_youtube')
-    expect(body.connectors.connector_changelog).toEqual([{ id: 1, content: 'changelog entry' }])
-    expect(body.connectors.connector_youtube).toEqual([{ id: 2, content: 'youtube video' }])
+    expect(body.connectors).toHaveProperty('changelog')
+    expect(body.connectors).toHaveProperty('youtube')
+    expect(body.connectors.changelog).toEqual([{ id: 1, content: 'changelog entry' }])
+    expect(body.connectors.youtube).toEqual([{ id: 2, content: 'youtube video' }])
   })
 
   it('returns empty object when no connector tables exist', async () => {
@@ -78,11 +78,11 @@ describe('GET /connectors/:name', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/connector_changelog')
+    const res = await app.request('/connectors/changelog')
     expect(res.status).toBe(200)
 
     const body = await res.json()
-    expect(body.connector).toBe('connector_changelog')
+    expect(body.connector).toBe('changelog')
     expect(body.data).toEqual([{ id: 1, content: 'test' }])
   })
 
@@ -93,7 +93,7 @@ describe('GET /connectors/:name', () => {
     }
     vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
 
-    const res = await app.request('/connectors/connector_unknown')
+    const res = await app.request('/connectors/unknown')
     expect(res.status).toBe(404)
   })
 
