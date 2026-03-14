@@ -1,8 +1,12 @@
 import { Hono } from 'hono'
 import type { PoolClient } from 'pg'
+import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import { pool } from '../db/client.js'
 
 export const connectorsRoute = new Hono()
+
+connectorsRoute.use('*', authMiddleware)
+connectorsRoute.use('/latest', requireAdmin)
 
 async function getConnectorTables(client: PoolClient): Promise<string[]> {
   const result = await client.query<{ table_name: string }>(`
