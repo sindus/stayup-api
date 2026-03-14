@@ -63,6 +63,49 @@ describe('GET /connectors', () => {
   })
 })
 
+describe('GET /connectors/latest', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns latest entry per provider_id for all connectors', async () => {
+    const mockClient = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [{ table_name: 'connector_changelog' }, { table_name: 'connector_youtube' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: 2, provider_id: 1, content: 'latest changelog' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 4, provider_id: 1, content: 'latest video' }] }),
+      release: vi.fn(),
+    }
+    vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
+
+    const res = await app.request('/connectors/latest')
+    expect(res.status).toBe(200)
+
+    const body = await res.json()
+    expect(body.latest).toHaveProperty('changelog')
+    expect(body.latest).toHaveProperty('youtube')
+    expect(body.latest.changelog).toEqual([{ id: 2, provider_id: 1, content: 'latest changelog' }])
+    expect(body.latest.youtube).toEqual([{ id: 4, provider_id: 1, content: 'latest video' }])
+  })
+
+  it('returns empty object when no connector tables exist', async () => {
+    const mockClient = {
+      query: vi.fn().mockResolvedValueOnce({ rows: [] }),
+      release: vi.fn(),
+    }
+    vi.mocked(pool.connect).mockResolvedValue(mockClient as never)
+
+    const res = await app.request('/connectors/latest')
+    expect(res.status).toBe(200)
+
+    const body = await res.json()
+    expect(body.latest).toEqual({})
+  })
+})
+
 describe('GET /connectors/:name', () => {
   beforeEach(() => {
     vi.clearAllMocks()

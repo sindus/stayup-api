@@ -28,6 +28,35 @@ connectorsRoute.get('/', async (c) => {
   }
 })
 
+connectorsRoute.get('/latest', async (c) => {
+  const client = await pool.connect()
+  try {
+    const tablesResult = await client.query<{ table_name: string }>(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name LIKE 'connector_%'
+      ORDER BY table_name
+    `)
+
+    const connectorTables = tablesResult.rows.map((r) => r.table_name)
+    const data: Record<string, unknown[]> = {}
+
+    for (const table of connectorTables) {
+      const result = await client.query(`
+        SELECT DISTINCT ON (provider_id) *
+        FROM "${table}"
+        ORDER BY provider_id, COALESCE(datetime, executed_at) DESC
+      `)
+      data[table.replace(/^connector_/, '')] = result.rows
+    }
+
+    return c.json({ latest: data })
+  } finally {
+    client.release()
+  }
+})
+
 connectorsRoute.get('/:name', async (c) => {
   const name = c.req.param('name')
   const client = await pool.connect()

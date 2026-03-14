@@ -50,6 +50,19 @@ describe('GET /connectors', () => {
   })
 })
 
+describe('GET /connectors/latest', () => {
+  it('returns latest per provider_id for all connectors', async () => {
+    const res = await app.request('/connectors/latest')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveProperty('latest')
+    expect(body.latest).toHaveProperty('changelog')
+    expect(body.latest).toHaveProperty('youtube')
+    expect(Array.isArray(body.latest.changelog)).toBe(true)
+    expect(Array.isArray(body.latest.youtube)).toBe(true)
+  })
+})
+
 describe('GET /connectors/:name', () => {
   it('returns data for changelog', async () => {
     const res = await app.request('/connectors/changelog')
