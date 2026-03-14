@@ -6,7 +6,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
-RUN npm run build
+RUN npm run build && cp src/db/schema.sql dist/src/db/schema.sql
 
 FROM node:22-alpine
 

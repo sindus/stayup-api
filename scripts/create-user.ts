@@ -1,5 +1,10 @@
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import bcrypt from 'bcryptjs'
 import { pool } from '../src/db/client.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const [, , username, password, role = 'user'] = process.argv
 
@@ -13,6 +18,9 @@ if (!['user', 'admin'].includes(role)) {
   console.error('Role must be "user" or "admin"')
   process.exit(1)
 }
+
+const schema = readFileSync(join(__dirname, '../src/db/schema.sql'), 'utf-8')
+await pool.query(schema)
 
 const passwordHash = await bcrypt.hash(password, 10)
 
