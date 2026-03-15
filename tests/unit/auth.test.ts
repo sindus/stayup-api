@@ -1,14 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import bcrypt from 'bcryptjs'
 import app from '../../src/app.js'
 import { TEST_ENV } from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({
-  getPool: vi.fn(),
+  getSql: vi.fn(),
 }))
 
-import { getPool } from '../../src/db/client.js'
+import { getSql } from '../../src/db/client.js'
 
-const HASHED_PASSWORD = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy' // "secret"
+let HASHED_PASSWORD: string
+beforeAll(async () => {
+  HASHED_PASSWORD = await bcrypt.hash('secret', 10)
+})
 
 describe('POST /auth/login', () => {
   beforeEach(() => {
@@ -16,11 +20,11 @@ describe('POST /auth/login', () => {
   })
 
   it('returns token for valid credentials', async () => {
-    vi.mocked(getPool).mockReturnValue({
-      query: vi.fn().mockResolvedValueOnce({
-        rows: [{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }],
-      }),
-    } as never)
+    const sql = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }])
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
       '/auth/login',
@@ -39,9 +43,9 @@ describe('POST /auth/login', () => {
   })
 
   it('returns 401 for unknown user', async () => {
-    vi.mocked(getPool).mockReturnValue({
-      query: vi.fn().mockResolvedValueOnce({ rows: [] }),
-    } as never)
+    const sql = vi.fn().mockResolvedValueOnce([])
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
       '/auth/login',
@@ -57,11 +61,11 @@ describe('POST /auth/login', () => {
   })
 
   it('returns 401 for wrong password', async () => {
-    vi.mocked(getPool).mockReturnValue({
-      query: vi.fn().mockResolvedValueOnce({
-        rows: [{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }],
-      }),
-    } as never)
+    const sql = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }])
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
       '/auth/login',

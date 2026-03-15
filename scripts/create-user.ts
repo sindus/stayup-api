@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import bcrypt from 'bcryptjs'
-import { getPool } from '../src/db/client.js'
+import { getSql } from '../src/db/client.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -23,19 +23,15 @@ const connectionString =
   process.env.DATABASE_URL ??
   `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup'}`
 
-const pool = getPool(connectionString)
+const sql = getSql(connectionString)
 
 const schema = readFileSync(join(__dirname, '../src/db/schema.sql'), 'utf-8')
-await pool.query(schema)
+await sql.unsafe(schema)
 
 const passwordHash = await bcrypt.hash(password, 10)
 
 try {
-  await pool.query('INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)', [
-    username,
-    passwordHash,
-    role,
-  ])
+  await sql`INSERT INTO users (username, password_hash, role) VALUES (${username}, ${passwordHash}, ${role})`
   console.log(`User "${username}" created with role "${role}"`)
 } catch (err: unknown) {
   if ((err as { code?: string }).code === '23505') {
@@ -44,5 +40,5 @@ try {
   }
   throw err
 } finally {
-  await pool.end()
+  await sql.end()
 }

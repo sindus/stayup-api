@@ -1,12 +1,15 @@
-import { Pool } from 'pg'
+import postgres from 'postgres'
 
-const pools = new Map<string, Pool>()
+const instances = new Map<string, postgres.Sql>()
 
-export function getPool(connectionString: string): Pool {
-  let pool = pools.get(connectionString)
-  if (!pool) {
-    pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } })
-    pools.set(connectionString, pool)
+export function getSql(connectionString: string): postgres.Sql {
+  let sql = instances.get(connectionString)
+  if (!sql) {
+    sql = postgres(connectionString, {
+      max: 5,
+      ssl: connectionString.includes('sslmode') ? { rejectUnauthorized: false } : false,
+    })
+    instances.set(connectionString, sql)
   }
-  return pool
+  return sql
 }
