@@ -12,6 +12,7 @@ app.onError((err, c) => {
 
 app.route('/auth', authRoute)
 app.get('/', (c) => c.json({ status: 'ok' }))
+app.get('/debug-env', (c) => c.json({ keys: Object.keys(c.env ?? {}), db: !!c.env?.DATABASE_URL, jwt: !!c.env?.JWT_SECRET }))
 app.route('/connectors', connectorsRoute)
 
 export default app
