@@ -8,11 +8,12 @@ export const TEST_ENV: Bindings = {
 
 export async function bearerToken(
   role: 'user' | 'admin' = 'user',
+  username = role === 'admin' ? 'testadmin' : 'testuser',
 ): Promise<string> {
   return sign(
     {
       sub: '1',
-      username: 'testuser',
+      username,
       role,
       exp: Math.floor(Date.now() / 1000) + 3600,
     },
@@ -23,6 +24,7 @@ export async function bearerToken(
 
 export async function authHeaders(
   role: 'user' | 'admin' = 'user',
+  username?: string,
 ): Promise<HeadersInit> {
-  return { Authorization: `Bearer ${await bearerToken(role)}` }
+  return { Authorization: `Bearer ${await bearerToken(role, username)}` }
 }

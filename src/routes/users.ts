@@ -92,7 +92,10 @@ usersRoute.patch('/:id', async (c) => {
       await sql`UPDATE users SET username = ${body.username} WHERE id = ${id}`
     } catch (err) {
       if ((err as { code?: string }).code === '23505') {
-        return c.json({ error: `Username "${body.username}" already taken` }, 409)
+        return c.json(
+          { error: `Username "${body.username}" already taken` },
+          409,
+        )
       }
       throw err
     }

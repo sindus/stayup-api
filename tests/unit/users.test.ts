@@ -139,7 +139,11 @@ describe('POST /users', () => {
           ...(await authHeaders('admin')),
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username: 'newuser', password: 'pass123', role: 'superadmin' }),
+        body: JSON.stringify({
+          username: 'newuser',
+          password: 'pass123',
+          role: 'superadmin',
+        }),
       },
       TEST_ENV,
     )
@@ -227,7 +231,8 @@ describe('PATCH /users/:id', () => {
   })
 
   it('returns 409 when username already taken', async () => {
-    const sql = vi.fn()
+    const sql = vi
+      .fn()
       .mockResolvedValueOnce([{ id: 1 }]) // existing check
       .mockRejectedValueOnce({ code: '23505' }) // duplicate username update
     sql.unsafe = vi.fn()

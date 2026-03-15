@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- User providers (subscriptions to profiles or repositories)
+CREATE TABLE IF NOT EXISTS user_providers (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider_type TEXT NOT NULL,
+  provider_id INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, provider_type, provider_id)
+);
+
 -- Unified log table
 CREATE TABLE IF NOT EXISTS log (
   id SERIAL PRIMARY KEY,

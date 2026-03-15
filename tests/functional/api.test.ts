@@ -18,6 +18,9 @@ const FUNCTIONAL_ENV: Bindings = {
 
 const sql = getSql(FUNCTIONAL_ENV.DATABASE_URL)
 
+let repoId: number
+let profileId: number
+
 beforeAll(async () => {
   const schema = readFileSync(
     join(__dirname, '../../src/db/schema.sql'),
@@ -34,10 +37,25 @@ beforeAll(async () => {
       ('testadmin', '${adminHash}', 'admin')
      ON CONFLICT (username) DO NOTHING`,
   )
+
+  const [repo] = (await sql.unsafe(
+    `INSERT INTO repository (url) VALUES ('https://github.com/test/repo')
+     ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
+     RETURNING id`,
+  )) as { id: number }[]
+  repoId = repo.id
+
+  const [profile] = (await sql.unsafe(
+    `INSERT INTO profile (url) VALUES ('https://youtube.com/@testchannel')
+     ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
+     RETURNING id`,
+  )) as { id: number }[]
+  profileId = profile.id
 })
 
 afterAll(async () => {
   await sql.unsafe(`
+    DROP TABLE IF EXISTS user_providers CASCADE;
     DROP TABLE IF EXISTS log CASCADE;
     DROP TABLE IF EXISTS connector_youtube CASCADE;
     DROP TABLE IF EXISTS connector_changelog CASCADE;
@@ -221,8 +239,15 @@ describe('/users', () => {
         '/users',
         {
           method: 'POST',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'functest_managed', password: 'pass123', role: 'user' }),
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            username: 'functest_managed',
+            password: 'pass123',
+            role: 'user',
+          }),
         },
         FUNCTIONAL_ENV,
       )
@@ -238,7 +263,10 @@ describe('/users', () => {
         '/users',
         {
           method: 'POST',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ username: 'functest_invalid' }),
         },
         FUNCTIONAL_ENV,
@@ -251,8 +279,14 @@ describe('/users', () => {
         '/users',
         {
           method: 'POST',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'functest_managed', password: 'other' }),
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            username: 'functest_managed',
+            password: 'other',
+          }),
         },
         FUNCTIONAL_ENV,
       )
@@ -266,7 +300,10 @@ describe('/users', () => {
         `/users/${managedUserId}`,
         {
           method: 'PATCH',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ role: 'admin' }),
         },
         FUNCTIONAL_ENV,
@@ -281,7 +318,10 @@ describe('/users', () => {
         `/users/${managedUserId}`,
         {
           method: 'PATCH',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({}),
         },
         FUNCTIONAL_ENV,
@@ -294,7 +334,10 @@ describe('/users', () => {
         `/users/${managedUserId}`,
         {
           method: 'PATCH',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ username: 'testuser' }),
         },
         FUNCTIONAL_ENV,
@@ -307,7 +350,10 @@ describe('/users', () => {
         '/users/999999',
         {
           method: 'PATCH',
-          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          headers: {
+            ...(await authHeaders('admin')),
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ role: 'user' }),
         },
         FUNCTIONAL_ENV,
@@ -336,5 +382,187 @@ describe('/users', () => {
       )
       expect(res.status).toBe(404)
     })
+  })
+})
+
+describe('/user/:username/providers', () => {
+  let providerSubscriptionId: number
+
+  describe('GET /user/:username/providers', () => {
+    it('returns 401 without token', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        {},
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(401)
+    })
+
+    it('returns 403 when accessing another user providers', async () => {
+      const res = await app.request(
+        '/user/testadmin/providers',
+        { headers: await authHeaders('user') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(403)
+    })
+
+    it('returns empty providers list initially', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        { headers: await authHeaders('user') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(Array.isArray(body.providers)).toBe(true)
+    })
+  })
+
+  describe('POST /user/:username/providers', () => {
+    it('returns 400 when provider_id is missing', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        {
+          method: 'POST',
+          headers: {
+            ...(await authHeaders('user')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ provider_type: 'repository' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 404 when provider does not exist', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        {
+          method: 'POST',
+          headers: {
+            ...(await authHeaders('user')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            provider_type: 'repository',
+            provider_id: 999999,
+          }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(404)
+    })
+
+    it('subscribes to a repository and returns 201', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        {
+          method: 'POST',
+          headers: {
+            ...(await authHeaders('user')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            provider_type: 'repository',
+            provider_id: repoId,
+          }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(201)
+      const body = await res.json()
+      expect(body.provider.provider_type).toBe('repository')
+      expect(body.provider.provider_id).toBe(repoId)
+      providerSubscriptionId = body.provider.id
+    })
+
+    it('returns 409 when already subscribed', async () => {
+      const res = await app.request(
+        '/user/testuser/providers',
+        {
+          method: 'POST',
+          headers: {
+            ...(await authHeaders('user')),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            provider_type: 'repository',
+            provider_id: repoId,
+          }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(409)
+    })
+  })
+
+  describe('DELETE /user/:username/providers/:id', () => {
+    it('returns 404 for unknown subscription', async () => {
+      const res = await app.request(
+        '/user/testuser/providers/999999',
+        { method: 'DELETE', headers: await authHeaders('user') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(404)
+    })
+
+    it('removes a subscription and returns it', async () => {
+      const res = await app.request(
+        `/user/testuser/providers/${providerSubscriptionId}`,
+        { method: 'DELETE', headers: await authHeaders('user') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.provider.id).toBe(providerSubscriptionId)
+    })
+  })
+})
+
+describe('GET /feed/:username', () => {
+  it('returns 401 without token', async () => {
+    const res = await app.request('/feed/testuser', {}, FUNCTIONAL_ENV)
+    expect(res.status).toBe(401)
+  })
+
+  it('returns 403 when accessing another user feed', async () => {
+    const res = await app.request(
+      '/feed/testadmin',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('returns 404 for unknown user', async () => {
+    const res = await app.request(
+      '/feed/unknownuser',
+      { headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('returns feed object for authenticated user', async () => {
+    const res = await app.request(
+      '/feed/testuser',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveProperty('feed')
+    expect(typeof body.feed).toBe('object')
+  })
+
+  it('admin can access any user feed', async () => {
+    const res = await app.request(
+      '/feed/testuser',
+      { headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
   })
 })
