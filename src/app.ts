@@ -21,7 +21,7 @@ app.get('/openapi.json', (c) => c.json(openApiSpec))
 app.get(
   '/docs',
   apiReference({
-    spec: { url: '/openapi.json' },
+    url: '/openapi.json',
     pageTitle: 'StayUp API',
   }),
 )
