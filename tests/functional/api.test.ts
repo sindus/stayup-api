@@ -19,7 +19,10 @@ const FUNCTIONAL_ENV: Bindings = {
 const sql = getSql(FUNCTIONAL_ENV.DATABASE_URL)
 
 beforeAll(async () => {
-  const schema = readFileSync(join(__dirname, '../../src/db/schema.sql'), 'utf-8')
+  const schema = readFileSync(
+    join(__dirname, '../../src/db/schema.sql'),
+    'utf-8',
+  )
   await sql.unsafe(schema)
 
   const bcrypt = await import('bcryptjs')
@@ -178,5 +181,160 @@ describe('token returned by /auth/login works', () => {
       FUNCTIONAL_ENV,
     )
     expect(res.status).toBe(200)
+  })
+})
+
+describe('/users', () => {
+  let managedUserId: number
+
+  describe('GET /users', () => {
+    it('returns 401 without token', async () => {
+      const res = await app.request('/users', {}, FUNCTIONAL_ENV)
+      expect(res.status).toBe(401)
+    })
+
+    it('returns 403 for non-admin', async () => {
+      const res = await app.request(
+        '/users',
+        { headers: await authHeaders('user') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(403)
+    })
+
+    it('returns list of users for admin', async () => {
+      const res = await app.request(
+        '/users',
+        { headers: await authHeaders('admin') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(Array.isArray(body.users)).toBe(true)
+      expect(body.users.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('POST /users', () => {
+    it('creates a user and returns 201', async () => {
+      const res = await app.request(
+        '/users',
+        {
+          method: 'POST',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'functest_managed', password: 'pass123', role: 'user' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(201)
+      const body = await res.json()
+      expect(body.user.username).toBe('functest_managed')
+      expect(body.user.role).toBe('user')
+      managedUserId = body.user.id
+    })
+
+    it('returns 400 when password is missing', async () => {
+      const res = await app.request(
+        '/users',
+        {
+          method: 'POST',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'functest_invalid' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 409 when username already exists', async () => {
+      const res = await app.request(
+        '/users',
+        {
+          method: 'POST',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'functest_managed', password: 'other' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(409)
+    })
+  })
+
+  describe('PATCH /users/:id', () => {
+    it('updates user role', async () => {
+      const res = await app.request(
+        `/users/${managedUserId}`,
+        {
+          method: 'PATCH',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'admin' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.user.role).toBe('admin')
+    })
+
+    it('returns 400 for empty body', async () => {
+      const res = await app.request(
+        `/users/${managedUserId}`,
+        {
+          method: 'PATCH',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 409 when username already taken', async () => {
+      const res = await app.request(
+        `/users/${managedUserId}`,
+        {
+          method: 'PATCH',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'testuser' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(409)
+    })
+
+    it('returns 404 for unknown user', async () => {
+      const res = await app.request(
+        '/users/999999',
+        {
+          method: 'PATCH',
+          headers: { ...(await authHeaders('admin')), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'user' }),
+        },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(404)
+    })
+  })
+
+  describe('DELETE /users/:id', () => {
+    it('deletes a user and returns it', async () => {
+      const res = await app.request(
+        `/users/${managedUserId}`,
+        { method: 'DELETE', headers: await authHeaders('admin') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.user.id).toBe(managedUserId)
+    })
+
+    it('returns 404 for unknown user', async () => {
+      const res = await app.request(
+        '/users/999999',
+        { method: 'DELETE', headers: await authHeaders('admin') },
+        FUNCTIONAL_ENV,
+      )
+      expect(res.status).toBe(404)
+    })
   })
 })

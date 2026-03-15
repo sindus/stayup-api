@@ -1,8 +1,8 @@
-import { Hono } from 'hono'
 import bcrypt from 'bcryptjs'
-import type { Bindings } from '../types.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import { Hono } from 'hono'
 import { getSql } from '../db/client.js'
+import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import type { Bindings } from '../types.js'
 
 type User = {
   id: number
@@ -19,13 +19,19 @@ usersRoute.use('*', requireAdmin)
 // GET /users — list all users
 usersRoute.get('/', async (c) => {
   const sql = getSql(c.env.DATABASE_URL)
-  const users = await sql<User[]>`SELECT id, username, role, created_at FROM users ORDER BY id`
+  const users = await sql<
+    User[]
+  >`SELECT id, username, role, created_at FROM users ORDER BY id`
   return c.json({ users })
 })
 
 // POST /users — create a user
 usersRoute.post('/', async (c) => {
-  const body = await c.req.json<{ username: string; password: string; role?: string }>()
+  const body = await c.req.json<{
+    username: string
+    password: string
+    role?: string
+  }>()
 
   if (!body.username || !body.password) {
     return c.json({ error: 'username and password are required' }, 400)
@@ -57,10 +63,17 @@ usersRoute.post('/', async (c) => {
 // PATCH /users/:id — update username, password or role
 usersRoute.patch('/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const body = await c.req.json<{ username?: string; password?: string; role?: string }>()
+  const body = await c.req.json<{
+    username?: string
+    password?: string
+    role?: string
+  }>()
 
   if (!body.username && !body.password && !body.role) {
-    return c.json({ error: 'at least one field is required (username, password, role)' }, 400)
+    return c.json(
+      { error: 'at least one field is required (username, password, role)' },
+      400,
+    )
   }
 
   if (body.role && !['user', 'admin'].includes(body.role)) {
@@ -75,7 +88,14 @@ usersRoute.patch('/:id', async (c) => {
   }
 
   if (body.username) {
-    await sql`UPDATE users SET username = ${body.username} WHERE id = ${id}`
+    try {
+      await sql`UPDATE users SET username = ${body.username} WHERE id = ${id}`
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        return c.json({ error: `Username "${body.username}" already taken` }, 409)
+      }
+      throw err
+    }
   }
   if (body.password) {
     const hash = await bcrypt.hash(body.password, 10)
@@ -85,7 +105,9 @@ usersRoute.patch('/:id', async (c) => {
     await sql`UPDATE users SET role = ${body.role} WHERE id = ${id}`
   }
 
-  const [user] = await sql<User[]>`SELECT id, username, role, created_at FROM users WHERE id = ${id}`
+  const [user] = await sql<
+    User[]
+  >`SELECT id, username, role, created_at FROM users WHERE id = ${id}`
   return c.json({ user })
 })
 
