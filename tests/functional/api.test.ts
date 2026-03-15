@@ -1,11 +1,11 @@
-import { readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import app from '../../src/app.js'
-import { getPool } from '../../src/db/client.js'
-import { authHeaders } from '../helpers.js'
+import { getSql } from '../../src/db/client.js'
 import type { Bindings } from '../../src/types.js'
+import { authHeaders } from '../helpers.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -16,26 +16,25 @@ const FUNCTIONAL_ENV: Bindings = {
   JWT_SECRET: 'test-secret',
 }
 
-const pool = getPool(FUNCTIONAL_ENV.DATABASE_URL)
+const sql = getSql(FUNCTIONAL_ENV.DATABASE_URL)
 
 beforeAll(async () => {
   const schema = readFileSync(join(__dirname, '../../src/db/schema.sql'), 'utf-8')
-  await pool.query(schema)
+  await sql.unsafe(schema)
 
   const bcrypt = await import('bcryptjs')
   const userHash = await bcrypt.hash('userpass', 10)
   const adminHash = await bcrypt.hash('adminpass', 10)
-  await pool.query(
+  await sql.unsafe(
     `INSERT INTO users (username, password_hash, role) VALUES
-      ('testuser', $1, 'user'),
-      ('testadmin', $2, 'admin')
+      ('testuser', '${userHash}', 'user'),
+      ('testadmin', '${adminHash}', 'admin')
      ON CONFLICT (username) DO NOTHING`,
-    [userHash, adminHash],
   )
 })
 
 afterAll(async () => {
-  await pool.query(`
+  await sql.unsafe(`
     DROP TABLE IF EXISTS log CASCADE;
     DROP TABLE IF EXISTS connector_youtube CASCADE;
     DROP TABLE IF EXISTS connector_changelog CASCADE;
@@ -43,7 +42,7 @@ afterAll(async () => {
     DROP TABLE IF EXISTS repository CASCADE;
     DROP TABLE IF EXISTS users CASCADE;
   `)
-  await pool.end()
+  await sql.end()
 })
 
 describe('GET /', () => {

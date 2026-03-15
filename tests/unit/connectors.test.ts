@@ -10,8 +10,12 @@ import { getSql } from '../../src/db/client.js'
 
 function mockSql(responses: unknown[]) {
   let call = 0
-  const sql = vi.fn().mockImplementation(() => Promise.resolve(responses[call++] ?? []))
-  sql.unsafe = vi.fn().mockImplementation(() => Promise.resolve(responses[call++] ?? []))
+  const sql = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve(responses[call++] ?? []))
+  sql.unsafe = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve(responses[call++] ?? []))
   vi.mocked(getSql).mockReturnValue(sql as never)
   return sql
 }
@@ -39,7 +43,11 @@ describe('GET /connectors', () => {
     ])
     vi.mocked(getSql).mockReturnValue(sql as never)
 
-    const res = await app.request('/connectors', { headers: await authHeaders('user') }, TEST_ENV)
+    const res = await app.request(
+      '/connectors',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
     expect(res.status).toBe(200)
 
     const body = await res.json()
@@ -52,7 +60,11 @@ describe('GET /connectors', () => {
     sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 
-    const res = await app.request('/connectors', { headers: await authHeaders('user') }, TEST_ENV)
+    const res = await app.request(
+      '/connectors',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.connectors).toEqual({})
@@ -78,14 +90,20 @@ describe('GET /connectors/latest', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns latest entry per provider_id for all connectors', async () => {
-    const sql = vi.fn().mockResolvedValueOnce([
-      { table_name: 'connector_changelog' },
-      { table_name: 'connector_youtube' },
-    ])
+    const sql = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { table_name: 'connector_changelog' },
+        { table_name: 'connector_youtube' },
+      ])
     sql.unsafe = vi
       .fn()
-      .mockResolvedValueOnce([{ id: 2, provider_id: 1, content: 'latest changelog' }])
-      .mockResolvedValueOnce([{ id: 4, provider_id: 1, content: 'latest video' }])
+      .mockResolvedValueOnce([
+        { id: 2, provider_id: 1, content: 'latest changelog' },
+      ])
+      .mockResolvedValueOnce([
+        { id: 4, provider_id: 1, content: 'latest video' },
+      ])
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -95,8 +113,12 @@ describe('GET /connectors/latest', () => {
     )
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.latest.changelog).toEqual([{ id: 2, provider_id: 1, content: 'latest changelog' }])
-    expect(body.latest.youtube).toEqual([{ id: 4, provider_id: 1, content: 'latest video' }])
+    expect(body.latest.changelog).toEqual([
+      { id: 2, provider_id: 1, content: 'latest changelog' },
+    ])
+    expect(body.latest.youtube).toEqual([
+      { id: 4, provider_id: 1, content: 'latest video' },
+    ])
   })
 })
 
@@ -107,7 +129,9 @@ describe('GET /connectors/:name', () => {
     const sql = vi
       .fn()
       .mockResolvedValueOnce([{ table_name: 'connector_changelog' }])
-    sql.unsafe = vi.fn().mockResolvedValueOnce([{ id: 2, provider_id: 1, content: 'latest' }])
+    sql.unsafe = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: 2, provider_id: 1, content: 'latest' }])
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(

@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import bcrypt from 'bcryptjs'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
 import { TEST_ENV } from '../helpers.js'
 
@@ -20,9 +20,14 @@ describe('POST /auth/login', () => {
   })
 
   it('returns token for valid credentials', async () => {
-    const sql = vi
-      .fn()
-      .mockResolvedValueOnce([{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }])
+    const sql = vi.fn().mockResolvedValueOnce([
+      {
+        id: 1,
+        username: 'admin',
+        password_hash: HASHED_PASSWORD,
+        role: 'admin',
+      },
+    ])
     sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 
@@ -61,9 +66,14 @@ describe('POST /auth/login', () => {
   })
 
   it('returns 401 for wrong password', async () => {
-    const sql = vi
-      .fn()
-      .mockResolvedValueOnce([{ id: 1, username: 'admin', password_hash: HASHED_PASSWORD, role: 'admin' }])
+    const sql = vi.fn().mockResolvedValueOnce([
+      {
+        id: 1,
+        username: 'admin',
+        password_hash: HASHED_PASSWORD,
+        role: 'admin',
+      },
+    ])
     sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 

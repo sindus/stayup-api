@@ -1,6 +1,6 @@
-import { readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import bcrypt from 'bcryptjs'
 import { getSql } from '../src/db/client.js'
 
@@ -9,7 +9,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const [, , username, password, role = 'user'] = process.argv
 
 if (!username || !password) {
-  console.error('Usage: tsx scripts/create-user.ts <username> <password> [role]')
+  console.error(
+    'Usage: tsx scripts/create-user.ts <username> <password> [role]',
+  )
   console.error('Roles: user (default), admin')
   process.exit(1)
 }

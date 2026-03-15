@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
-import type { Bindings } from './types.js'
 import { authRoute } from './routes/auth.js'
 import { connectorsRoute } from './routes/connectors.js'
+import type { Bindings } from './types.js'
 
 const app = new Hono<{ Bindings: Bindings }>()
 

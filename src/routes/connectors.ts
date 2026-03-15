@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import type postgres from 'postgres'
-import type { Bindings } from '../types.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import { getSql } from '../db/client.js'
+import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import type { Bindings } from '../types.js'
 
 export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 
@@ -20,7 +20,10 @@ async function getConnectorTables(sql: postgres.Sql): Promise<string[]> {
   return rows.map((r) => r.table_name)
 }
 
-async function queryLatestPerProvider(sql: postgres.Sql, table: string): Promise<unknown[]> {
+async function queryLatestPerProvider(
+  sql: postgres.Sql,
+  table: string,
+): Promise<unknown[]> {
   return sql.unsafe(`
     SELECT DISTINCT ON (provider_id) *
     FROM "${table}"
@@ -44,7 +47,10 @@ connectorsRoute.get('/latest', async (c) => {
   const tables = await getConnectorTables(sql)
   const data: Record<string, unknown[]> = {}
   for (const table of tables) {
-    data[table.replace(/^connector_/, '')] = await queryLatestPerProvider(sql, table)
+    data[table.replace(/^connector_/, '')] = await queryLatestPerProvider(
+      sql,
+      table,
+    )
   }
   return c.json({ latest: data })
 })

@@ -1,8 +1,8 @@
+import bcrypt from 'bcryptjs'
 import { Hono } from 'hono'
 import { sign } from 'hono/jwt'
-import bcrypt from 'bcryptjs'
-import type { Bindings } from '../types.js'
 import { getSql } from '../db/client.js'
+import type { Bindings } from '../types.js'
 
 type User = {
   id: number
@@ -17,7 +17,9 @@ authRoute.post('/login', async (c) => {
   const body = await c.req.json<{ username: string; password: string }>()
   const sql = getSql(c.env.DATABASE_URL)
 
-  const [user] = await sql<User[]>`SELECT * FROM users WHERE username = ${body.username}`
+  const [user] = await sql<
+    User[]
+  >`SELECT * FROM users WHERE username = ${body.username}`
 
   if (!user || !(await bcrypt.compare(body.password, user.password_hash))) {
     return c.json({ error: 'Invalid credentials' }, 401)

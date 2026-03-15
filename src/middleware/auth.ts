@@ -1,5 +1,5 @@
-import { jwt } from 'hono/jwt'
 import type { Context, Next } from 'hono'
+import { jwt } from 'hono/jwt'
 import type { Bindings } from '../types.js'
 
 export const authMiddleware = (c: Context, next: Next) => {

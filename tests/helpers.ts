@@ -6,14 +6,23 @@ export const TEST_ENV: Bindings = {
   JWT_SECRET: 'test-secret',
 }
 
-export async function bearerToken(role: 'user' | 'admin' = 'user'): Promise<string> {
+export async function bearerToken(
+  role: 'user' | 'admin' = 'user',
+): Promise<string> {
   return sign(
-    { sub: '1', username: 'testuser', role, exp: Math.floor(Date.now() / 1000) + 3600 },
+    {
+      sub: '1',
+      username: 'testuser',
+      role,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    },
     TEST_ENV.JWT_SECRET,
     'HS256',
   )
 }
 
-export async function authHeaders(role: 'user' | 'admin' = 'user'): Promise<HeadersInit> {
+export async function authHeaders(
+  role: 'user' | 'admin' = 'user',
+): Promise<HeadersInit> {
   return { Authorization: `Bearer ${await bearerToken(role)}` }
 }

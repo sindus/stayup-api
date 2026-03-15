@@ -7,7 +7,9 @@ export function getSql(connectionString: string): postgres.Sql {
   if (!sql) {
     sql = postgres(connectionString, {
       max: 5,
-      ssl: connectionString.includes('sslmode') ? { rejectUnauthorized: false } : false,
+      ssl: connectionString.includes('sslmode')
+        ? { rejectUnauthorized: false }
+        : false,
     })
     instances.set(connectionString, sql)
   }
