@@ -44,9 +44,12 @@ feedRoute.get('/:username', async (c) => {
 
   // Discover which provider table each connector_* table references via FK
   const connectorFks = await sql<
-    { connector_table: string; provider_table: string }[]
+    { connector_table: string; provider_table: string; fk_column: string }[]
   >`
-    SELECT tc.table_name AS connector_table, ccu.table_name AS provider_table
+    SELECT
+      tc.table_name AS connector_table,
+      ccu.table_name AS provider_table,
+      kcu.column_name AS fk_column
     FROM information_schema.table_constraints tc
     JOIN information_schema.referential_constraints rc
       ON tc.constraint_name = rc.constraint_name
@@ -60,20 +63,31 @@ feedRoute.get('/:username', async (c) => {
     WHERE tc.constraint_type = 'FOREIGN KEY'
       AND tc.table_schema = 'public'
       AND tc.table_name LIKE ${'connector_%'}
-      AND kcu.column_name = 'provider_id'
+      AND kcu.column_name IN ('provider_id', 'repository_id')
   `
 
   const feed: Record<string, unknown[]> = {}
 
-  for (const { connector_table, provider_table } of connectorFks) {
+  for (const { connector_table, provider_table, fk_column } of connectorFks) {
     const providerIds = byType[provider_table]
     if (!providerIds || providerIds.length === 0) continue
 
+    // connector_scrap has no datetime column; use executed_at as fallback
+    const [dtRow] = await sql<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = ${connector_table}
+        AND column_name = 'datetime'
+    `
+    const orderExpr = dtRow
+      ? `COALESCE(datetime, executed_at)`
+      : `executed_at`
+
     const rows = await sql.unsafe(
-      `SELECT DISTINCT ON (provider_id) *
+      `SELECT DISTINCT ON ("${fk_column}") *
        FROM "${connector_table}"
-       WHERE provider_id = ANY($1)
-       ORDER BY provider_id, COALESCE(datetime, executed_at) DESC`,
+       WHERE "${fk_column}" = ANY($1)
+       ORDER BY "${fk_column}", ${orderExpr} DESC`,
       [providerIds],
     )
 

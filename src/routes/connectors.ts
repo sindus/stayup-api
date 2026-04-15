@@ -20,14 +20,34 @@ async function getConnectorTables(sql: postgres.Sql): Promise<string[]> {
   return rows.map((r) => r.table_name)
 }
 
+async function getTableColumns(
+  sql: postgres.Sql,
+  table: string,
+): Promise<Set<string>> {
+  const rows = await sql<{ column_name: string }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = ${table}
+  `
+  return new Set(rows.map((r) => r.column_name))
+}
+
 async function queryLatestPerProvider(
   sql: postgres.Sql,
   table: string,
 ): Promise<unknown[]> {
+  const cols = await getTableColumns(sql, table)
+  // connector_rss / connector_scrap use repository_id; others use provider_id
+  const fkCol = cols.has('provider_id') ? 'provider_id' : 'repository_id'
+  // connector_scrap has no datetime column
+  const orderExpr = cols.has('datetime')
+    ? `COALESCE(datetime, executed_at)`
+    : `executed_at`
+
   return sql.unsafe(`
-    SELECT DISTINCT ON (provider_id) *
+    SELECT DISTINCT ON ("${fkCol}") *
     FROM "${table}"
-    ORDER BY provider_id, COALESCE(datetime, executed_at) DESC
+    ORDER BY "${fkCol}", ${orderExpr} DESC
   `)
 }
 
