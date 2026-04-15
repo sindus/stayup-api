@@ -96,6 +96,14 @@ describe('GET /connectors/latest', () => {
         { table_name: 'connector_changelog' },
         { table_name: 'connector_youtube' },
       ])
+      .mockResolvedValueOnce([
+        { column_name: 'provider_id' },
+        { column_name: 'executed_at' },
+      ]) // getTableColumns: connector_changelog
+      .mockResolvedValueOnce([
+        { column_name: 'provider_id' },
+        { column_name: 'executed_at' },
+      ]) // getTableColumns: connector_youtube
     sql.unsafe = vi
       .fn()
       .mockResolvedValueOnce([
@@ -128,7 +136,11 @@ describe('GET /connectors/:name', () => {
   it('returns latest per provider_id for a specific connector', async () => {
     const sql = vi
       .fn()
-      .mockResolvedValueOnce([{ table_name: 'connector_changelog' }])
+      .mockResolvedValueOnce([{ table_name: 'connector_changelog' }]) // exists check
+      .mockResolvedValueOnce([
+        { column_name: 'provider_id' },
+        { column_name: 'executed_at' },
+      ]) // getTableColumns
     sql.unsafe = vi
       .fn()
       .mockResolvedValueOnce([{ id: 2, provider_id: 1, content: 'latest' }])

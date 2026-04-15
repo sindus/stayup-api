@@ -74,8 +74,10 @@ describe('GET /feed/:username', () => {
         {
           connector_table: 'connector_changelog',
           provider_table: 'repository',
+          fk_column: 'provider_id',
         },
       ], // FK info
+      [], // datetime column check (no datetime col)
       [{ id: 5, provider_id: 10, content: 'latest changelog' }], // unsafe: data
     ])
     const res = await app.request(
@@ -99,9 +101,15 @@ describe('GET /feed/:username', () => {
         {
           connector_table: 'connector_changelog',
           provider_table: 'repository',
+          fk_column: 'provider_id',
         },
-        { connector_table: 'connector_youtube', provider_table: 'profile' },
+        {
+          connector_table: 'connector_youtube',
+          provider_table: 'profile',
+          fk_column: 'provider_id',
+        },
       ], // FK info
+      [], // datetime column check for changelog (no datetime col)
       [{ id: 5, provider_id: 10, content: 'latest changelog' }], // unsafe: changelog data
       // youtube is skipped — no profile subscriptions
     ])

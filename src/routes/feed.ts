@@ -79,9 +79,7 @@ feedRoute.get('/:username', async (c) => {
         AND table_name = ${connector_table}
         AND column_name = 'datetime'
     `
-    const orderExpr = dtRow
-      ? `COALESCE(datetime, executed_at)`
-      : `executed_at`
+    const orderExpr = dtRow ? 'COALESCE(datetime, executed_at)' : 'executed_at'
 
     const rows = await sql.unsafe(
       `SELECT DISTINCT ON ("${fk_column}") *
