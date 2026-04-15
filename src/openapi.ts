@@ -41,7 +41,7 @@ export const openApiSpec = {
           id: { type: 'integer' },
           provider_type: {
             type: 'string',
-            enum: ['repository', 'profile'],
+            enum: ['repository'],
             description: 'Nom de la table provider',
           },
           provider_id: { type: 'integer' },
@@ -404,7 +404,7 @@ export const openApiSpec = {
                 properties: {
                   provider_type: {
                     type: 'string',
-                    enum: ['repository', 'profile'],
+                    enum: ['repository'],
                     description: 'Table du provider',
                   },
                   provider_id: {
