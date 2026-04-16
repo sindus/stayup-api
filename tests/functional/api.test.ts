@@ -273,14 +273,12 @@ describe('POST /ui/users/:userId/repositories', () => {
           provider: 'changelog',
           url: 'https://github.com/test/repo',
           config: {},
-          label: 'Test Repo',
         }),
       },
       FUNCTIONAL_ENV,
     )
     expect(res.status).toBe(201)
     const body = await res.json()
-    expect(body.repository.label).toBe('Test Repo')
     expect(body.repository.provider).toBe('changelog')
     userLinkId = body.repository.id
   })
@@ -298,7 +296,6 @@ describe('POST /ui/users/:userId/repositories', () => {
           provider: 'changelog',
           url: 'https://github.com/test/repo',
           config: {},
-          label: 'Test Repo',
         }),
       },
       FUNCTIONAL_ENV,
@@ -317,7 +314,7 @@ describe('GET /ui/users/:userId/feed (with data)', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.repositories.length).toBe(1)
-    expect(body.repositories[0].label).toBe('Test Repo')
+    expect(body.repositories[0].provider).toBe('changelog')
   })
 })
 
