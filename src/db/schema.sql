@@ -104,7 +104,6 @@ CREATE TABLE IF NOT EXISTS user_repository (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
   repository_id INTEGER NOT NULL REFERENCES repository(id),
-  label         TEXT NOT NULL,
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, repository_id)
 );

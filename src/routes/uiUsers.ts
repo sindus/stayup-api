@@ -12,7 +12,6 @@ uiUsersRoute.use('*', requireAdmin)
 type UserRepo = {
   id: string
   repository_id: number
-  label: string
   created_at: string
   url: string
   provider: string
@@ -47,8 +46,6 @@ async function getLatestItemsForRepos(
 }
 
 // GET /ui/users/:userId/feed
-// Returns the user's subscribed repositories and their latest connector items.
-// Admin-only — called by the UI server with its service-account JWT.
 uiUsersRoute.get('/:userId/feed', async (c) => {
   const userId = c.req.param('userId')
   const sql = getSql(c.env.DATABASE_URL)
@@ -57,7 +54,6 @@ uiUsersRoute.get('/:userId/feed', async (c) => {
     SELECT
       ur.id,
       ur.repository_id,
-      ur.label,
       ur.created_at,
       r.url,
       r.type  AS provider,
@@ -91,18 +87,16 @@ uiUsersRoute.get('/:userId/feed', async (c) => {
 })
 
 // POST /ui/users/:userId/repositories
-// Upserts a repository row then creates the user_repository link.
 uiUsersRoute.post('/:userId/repositories', async (c) => {
   const userId = c.req.param('userId')
   const body = await c.req.json<{
     provider: string
     url: string
     config: Record<string, unknown>
-    label: string
   }>()
 
-  if (!body.provider || !body.url || !body.label) {
-    return c.json({ error: 'provider, url and label are required' }, 400)
+  if (!body.provider || !body.url) {
+    return c.json({ error: 'provider and url are required' }, 400)
   }
 
   const sql = getSql(c.env.DATABASE_URL)
@@ -123,13 +117,12 @@ uiUsersRoute.post('/:userId/repositories', async (c) => {
       {
         id: string
         repository_id: number
-        label: string
         created_at: string
       }[]
     >`
-      INSERT INTO user_repository (id, user_id, repository_id, label)
-      VALUES (${linkId}, ${userId}, ${repo.id}, ${body.label})
-      RETURNING id, repository_id, label, created_at
+      INSERT INTO user_repository (id, user_id, repository_id)
+      VALUES (${linkId}, ${userId}, ${repo.id})
+      RETURNING id, repository_id, created_at
     `
     return c.json(
       {
