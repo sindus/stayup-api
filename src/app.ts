@@ -4,6 +4,7 @@ import { openApiSpec } from './openapi.js'
 import { authRoute } from './routes/auth.js'
 import { connectorsRoute } from './routes/connectors.js'
 import { feedRoute } from './routes/feed.js'
+import { uiUsersRoute } from './routes/uiUsers.js'
 import { userProvidersRoute } from './routes/userProviders.js'
 import { usersRoute } from './routes/users.js'
 import type { Bindings } from './types.js'
@@ -16,6 +17,7 @@ app.route('/connectors', connectorsRoute)
 app.route('/users', usersRoute)
 app.route('/feed', feedRoute)
 app.route('/user', userProvidersRoute)
+app.route('/ui/users', uiUsersRoute)
 
 app.get('/openapi.json', (c) => c.json(openApiSpec))
 app.get(
