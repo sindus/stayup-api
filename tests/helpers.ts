@@ -4,6 +4,8 @@ import type { Bindings } from '../src/types.js'
 export const TEST_ENV: Bindings = {
   DATABASE_URL: 'postgres://test',
   JWT_SECRET: 'test-secret',
+  API_USERNAME: 'testadmin',
+  API_PASSWORD: 'testpass',
 }
 
 export async function bearerToken(
