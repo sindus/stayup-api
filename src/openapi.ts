@@ -717,5 +717,111 @@ export const openApiSpec = {
         },
       },
     },
+    '/ui/repositories': {
+      get: {
+        summary: 'Lister tous les repositories (admin)',
+        tags: ['Admin — Repositories'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Liste des repositories avec nombre d'abonnés",
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    repositories: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'integer' },
+                          url: { type: 'string' },
+                          type: {
+                            type: 'string',
+                            enum: ['changelog', 'youtube', 'rss', 'scrap'],
+                          },
+                          config: { type: 'object' },
+                          subscriber_count: { type: 'string' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+        },
+      },
+    },
+    '/ui/repositories/{repoId}': {
+      delete: {
+        summary: 'Supprimer un repository complètement (admin)',
+        description:
+          'Supprime les données connector, tous les liens user_repository et le repository.',
+        tags: ['Admin — Repositories'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'repoId',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Repository supprimé',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { success: { type: 'boolean' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+          404: { description: 'Repository introuvable' },
+        },
+      },
+    },
+    '/ui/repositories/{repoId}/data': {
+      delete: {
+        summary:
+          "Supprimer uniquement les données connector d'un repository (admin)",
+        description:
+          'Vide la table connector_* pour ce repository sans supprimer le repository ni les abonnements.',
+        tags: ['Admin — Repositories'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'repoId',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Données supprimées',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { success: { type: 'boolean' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+          404: { description: 'Repository introuvable' },
+        },
+      },
+    },
   },
 }

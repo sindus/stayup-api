@@ -1,6 +1,7 @@
 import { apiReference } from '@scalar/hono-api-reference'
 import { Hono } from 'hono'
 import { openApiSpec } from './openapi.js'
+import { adminRepositoriesRoute } from './routes/adminRepositories.js'
 import { authRoute } from './routes/auth.js'
 import { connectorsRoute } from './routes/connectors.js'
 import { oauthRoute } from './routes/oauth.js'
@@ -14,6 +15,7 @@ app.route('/auth', oauthRoute)
 app.get('/', (c) => c.json({ status: 'ok' }))
 app.route('/connectors', connectorsRoute)
 app.route('/ui/users', uiUsersRoute)
+app.route('/ui/repositories', adminRepositoriesRoute)
 
 app.get('/openapi.json', (c) => c.json(openApiSpec))
 app.get(
