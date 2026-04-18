@@ -149,8 +149,24 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
   )
 })
 
-// PATCH /ui/users/:userId — update a user
-uiUsersRoute.patch('/:userId', requireAdmin, async (c) => {
+// GET /ui/users/:userId — get user profile (self or admin)
+uiUsersRoute.get('/:userId', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const sql = getSql(c.env.DATABASE_URL)
+
+  const [user] = await sql<
+    { id: string; name: string; email: string; created_at: string }[]
+  >`
+    SELECT id, name, email, created_at FROM "user" WHERE id = ${userId}
+  `
+
+  if (!user) return c.json({ error: 'User not found' }, 404)
+
+  return c.json({ user })
+})
+
+// PATCH /ui/users/:userId — update a user (self or admin)
+uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
   const body = await c.req.json<{
     name?: string
