@@ -77,6 +77,125 @@ export const openApiSpec = {
         },
       },
     },
+    '/auth/register': {
+      post: {
+        summary: 'Créer un compte utilisateur',
+        description:
+          'Inscription publique. Crée un utilisateur et retourne immédiatement un JWT.',
+        tags: ['Authentification'],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'email', 'password'],
+                properties: {
+                  name: { type: 'string', example: 'Alice' },
+                  email: {
+                    type: 'string',
+                    format: 'email',
+                    example: 'alice@example.com',
+                  },
+                  password: { type: 'string', example: 'monmotdepasse' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Compte créé, token JWT retourné',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { token: { type: 'string' } },
+                },
+              },
+            },
+          },
+          400: { description: 'Champs requis manquants' },
+          409: { description: 'Email déjà utilisé' },
+        },
+      },
+    },
+    '/auth/oauth/google': {
+      get: {
+        summary: 'Initier le flux OAuth Google',
+        description: 'Génère un state JWT et redirige vers Google OAuth.',
+        tags: ['Authentification'],
+        responses: {
+          302: { description: 'Redirection vers Google' },
+        },
+      },
+    },
+    '/auth/oauth/google/callback': {
+      get: {
+        summary: 'Callback OAuth Google',
+        description:
+          "Échange le code, crée/trouve l'utilisateur, redirige vers l'UI avec un JWT.",
+        tags: ['Authentification'],
+        parameters: [
+          {
+            name: 'code',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'state',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          302: {
+            description: "Redirection vers l'UI (/api/auth/callback?token=JWT)",
+          },
+          400: { description: 'State invalide ou code manquant' },
+        },
+      },
+    },
+    '/auth/oauth/github': {
+      get: {
+        summary: 'Initier le flux OAuth GitHub',
+        description: 'Génère un state JWT et redirige vers GitHub OAuth.',
+        tags: ['Authentification'],
+        responses: {
+          302: { description: 'Redirection vers GitHub' },
+        },
+      },
+    },
+    '/auth/oauth/github/callback': {
+      get: {
+        summary: 'Callback OAuth GitHub',
+        description:
+          "Échange le code, crée/trouve l'utilisateur, redirige vers l'UI avec un JWT.",
+        tags: ['Authentification'],
+        parameters: [
+          {
+            name: 'code',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'state',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          302: {
+            description: "Redirection vers l'UI (/api/auth/callback?token=JWT)",
+          },
+          400: { description: 'State invalide ou code manquant' },
+        },
+      },
+    },
     '/auth/login': {
       post: {
         summary: 'Connexion — obtenir un token JWT',
@@ -301,9 +420,40 @@ export const openApiSpec = {
       },
     },
     '/ui/users/{userId}': {
+      get: {
+        summary: "Profil d'un utilisateur",
+        description: "Accessible par l'utilisateur lui-même ou un admin.",
+        tags: ['UI — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: {
+            description: "Profil de l'utilisateur",
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { user: { $ref: '#/components/schemas/User' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Accès refusé' },
+          404: { description: 'Utilisateur introuvable' },
+        },
+      },
       patch: {
         summary: 'Modifier un utilisateur',
-        tags: ['Admin — Utilisateurs'],
+        description: "Accessible par l'utilisateur lui-même ou un admin.",
+        tags: ['UI — Utilisateurs'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -341,7 +491,7 @@ export const openApiSpec = {
             },
           },
           401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Accès refusé (self ou admin requis)' },
           404: { description: 'Utilisateur introuvable' },
         },
       },
@@ -388,7 +538,7 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur (Better Auth)",
+            description: "ID de l'utilisateur",
           },
         ],
         responses: {
@@ -478,7 +628,7 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur (Better Auth)",
+            description: "ID de l'utilisateur",
           },
         ],
         requestBody: {
@@ -539,7 +689,7 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur (Better Auth)",
+            description: "ID de l'utilisateur",
           },
           {
             name: 'linkId',
