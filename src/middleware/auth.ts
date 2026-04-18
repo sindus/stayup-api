@@ -14,3 +14,17 @@ export const requireAdmin = async (c: Context, next: Next) => {
   }
   await next()
 }
+
+export const requireSelfOrAdmin = async (c: Context, next: Next) => {
+  const payload = c.get('jwtPayload') as { sub?: string; role?: string }
+  if (payload?.role === 'admin') {
+    await next()
+    return
+  }
+  const userId = c.req.param('userId')
+  if (payload?.role === 'user' && payload?.sub === userId) {
+    await next()
+    return
+  }
+  return c.json({ error: 'Forbidden' }, 403)
+}

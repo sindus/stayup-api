@@ -1,13 +1,17 @@
+import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type postgres from 'postgres'
 import { getSql } from '../db/client.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import {
+  authMiddleware,
+  requireAdmin,
+  requireSelfOrAdmin,
+} from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
 export const uiUsersRoute = new Hono<{ Bindings: Bindings }>()
 
 uiUsersRoute.use('*', authMiddleware)
-uiUsersRoute.use('*', requireAdmin)
 
 type UserRepo = {
   id: string
@@ -18,7 +22,6 @@ type UserRepo = {
   config: Record<string, unknown>
 }
 
-// Returns the last `limit` items per repository_id from a connector table.
 async function getLatestItemsForRepos(
   sql: postgres.Sql,
   table: string,
@@ -45,11 +48,13 @@ async function getLatestItemsForRepos(
   }
 }
 
-// GET /ui/users/:userId/feed
-uiUsersRoute.get('/:userId/feed', async (c) => {
-  const userId = c.req.param('userId')
-  const sql = getSql(c.env.DATABASE_URL)
-
+async function getFeedForUser(
+  sql: postgres.Sql,
+  userId: string,
+): Promise<{
+  repositories: UserRepo[]
+  connectors: Record<string, unknown[]>
+}> {
   const repositories = await sql<UserRepo[]>`
     SELECT
       ur.id,
@@ -65,10 +70,10 @@ uiUsersRoute.get('/:userId/feed', async (c) => {
   `
 
   if (repositories.length === 0) {
-    return c.json({
+    return {
       repositories: [],
       connectors: { changelog: [], youtube: [], rss: [], scrap: [] },
-    })
+    }
   }
 
   const repoIds = repositories.map((r) => r.repository_id)
@@ -80,14 +85,165 @@ uiUsersRoute.get('/:userId/feed', async (c) => {
     getLatestItemsForRepos(sql, 'connector_scrap', repoIds),
   ])
 
-  return c.json({
-    repositories,
-    connectors: { changelog, youtube, rss, scrap },
-  })
+  return { repositories, connectors: { changelog, youtube, rss, scrap } }
+}
+
+// ─── Admin-only: user management ────────────────────────────────────────────
+
+// GET /ui/users — list all users
+uiUsersRoute.get('/', requireAdmin, async (c) => {
+  const sql = getSql(c.env.DATABASE_URL)
+  const users = await sql<
+    { id: string; name: string; email: string; created_at: string }[]
+  >`
+    SELECT id, name, email, created_at FROM "user" ORDER BY created_at
+  `
+  return c.json({ users })
+})
+
+// POST /ui/users — create a user
+uiUsersRoute.post('/', requireAdmin, async (c) => {
+  const body = await c.req.json<{
+    name: string
+    email: string
+    password: string
+  }>()
+
+  if (!body.name || !body.email || !body.password) {
+    return c.json({ error: 'name, email and password are required' }, 400)
+  }
+
+  const sql = getSql(c.env.DATABASE_URL)
+  const passwordHash = await hash(body.password, 10)
+  const userId = crypto.randomUUID()
+  const accountId = crypto.randomUUID()
+  const now = new Date().toISOString()
+
+  try {
+    await sql.begin(async (tx) => {
+      await tx`
+        INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
+        VALUES (${userId}, ${body.name}, ${body.email}, ${now}, ${now}, false)
+      `
+      await tx`
+        INSERT INTO account (id, user_id, provider_id, account_id, password, created_at, updated_at)
+        VALUES (
+          ${accountId},
+          ${userId},
+          'credential',
+          ${body.email},
+          ${passwordHash},
+          ${now},
+          ${now}
+        )
+      `
+    })
+  } catch (err) {
+    if ((err as { code?: string }).code === '23505') {
+      return c.json({ error: 'Email already in use' }, 409)
+    }
+    throw err
+  }
+
+  return c.json(
+    { user: { id: userId, name: body.name, email: body.email } },
+    201,
+  )
+})
+
+// PATCH /ui/users/:userId — update a user
+uiUsersRoute.patch('/:userId', requireAdmin, async (c) => {
+  const userId = c.req.param('userId')
+  const body = await c.req.json<{
+    name?: string
+    email?: string
+    password?: string
+  }>()
+
+  const sql = getSql(c.env.DATABASE_URL)
+  const now = new Date().toISOString()
+
+  if (body.name || body.email) {
+    const [updated] = await sql<{ id: string }[]>`
+      UPDATE "user"
+      SET
+        name       = COALESCE(${body.name ?? null}, name),
+        email      = COALESCE(${body.email ?? null}, email),
+        updated_at = ${now}
+      WHERE id = ${userId}
+      RETURNING id
+    `
+    if (!updated) return c.json({ error: 'User not found' }, 404)
+  }
+
+  if (body.password) {
+    const passwordHash = await hash(body.password, 10)
+    await sql`
+      UPDATE account
+      SET password = ${passwordHash}, updated_at = ${now}
+      WHERE user_id = ${userId} AND provider_id = 'credential'
+    `
+  }
+
+  return c.json({ success: true })
+})
+
+// DELETE /ui/users/:userId — delete a user
+uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
+  const userId = c.req.param('userId')
+  const sql = getSql(c.env.DATABASE_URL)
+
+  const [deleted] = await sql<{ id: string }[]>`
+    DELETE FROM "user" WHERE id = ${userId} RETURNING id
+  `
+
+  if (!deleted) return c.json({ error: 'User not found' }, 404)
+
+  return c.json({ success: true })
+})
+
+// ─── User (self or admin): feed & repositories ───────────────────────────────
+
+// GET /ui/users/:userId/feed
+uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId')
+  const sql = getSql(c.env.DATABASE_URL)
+  const data = await getFeedForUser(sql, userId)
+  return c.json(data)
+})
+
+// GET /ui/users/:userId/feed/:connector
+uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId')
+  const connector = c.req.param('connector')
+
+  const allowedTables: Record<string, string> = {
+    changelog: 'connector_changelog',
+    youtube: 'connector_youtube',
+    rss: 'connector_rss',
+    scrap: 'connector_scrap',
+  }
+
+  const table = allowedTables[connector]
+  if (!table) return c.json({ error: 'Unknown connector' }, 404)
+
+  const sql = getSql(c.env.DATABASE_URL)
+
+  const repositories = await sql<{ repository_id: number }[]>`
+    SELECT ur.repository_id
+    FROM user_repository ur
+    JOIN repository r ON r.id = ur.repository_id
+    WHERE ur.user_id = ${userId} AND r.type = ${connector}
+  `
+
+  const repoIds = repositories.map((r) => r.repository_id)
+  const data = await getLatestItemsForRepos(sql, table, repoIds)
+
+  return c.json({ connector, data })
 })
 
 // POST /ui/users/:userId/repositories
-uiUsersRoute.post('/:userId/repositories', async (c) => {
+uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId')
   const body = await c.req.json<{
     provider: string
@@ -144,20 +300,24 @@ uiUsersRoute.post('/:userId/repositories', async (c) => {
 })
 
 // DELETE /ui/users/:userId/repositories/:linkId
-uiUsersRoute.delete('/:userId/repositories/:linkId', async (c) => {
-  const userId = c.req.param('userId')
-  const linkId = c.req.param('linkId')
-  const sql = getSql(c.env.DATABASE_URL)
+uiUsersRoute.delete(
+  '/:userId/repositories/:linkId',
+  requireSelfOrAdmin,
+  async (c) => {
+    const userId = c.req.param('userId')
+    const linkId = c.req.param('linkId')
+    const sql = getSql(c.env.DATABASE_URL)
 
-  const [deleted] = await sql<{ id: string }[]>`
+    const [deleted] = await sql<{ id: string }[]>`
     DELETE FROM user_repository
     WHERE id = ${linkId} AND user_id = ${userId}
     RETURNING id
   `
 
-  if (!deleted) {
-    return c.json({ error: 'Flux introuvable' }, 404)
-  }
+    if (!deleted) {
+      return c.json({ error: 'Flux introuvable' }, 404)
+    }
 
-  return c.json({ success: true })
-})
+    return c.json({ success: true })
+  },
+)

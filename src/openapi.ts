@@ -40,6 +40,15 @@ export const openApiSpec = {
           config: { type: 'object' },
         },
       },
+      User: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          name: { type: 'string' },
+          email: { type: 'string', format: 'email' },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
       Error: {
         type: 'object',
         properties: {
@@ -71,18 +80,38 @@ export const openApiSpec = {
     '/auth/login': {
       post: {
         summary: 'Connexion — obtenir un token JWT',
+        description:
+          'Authentification admin (username + password) ou utilisateur (email + password).',
         tags: ['Authentification'],
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
-                type: 'object',
-                required: ['username', 'password'],
-                properties: {
-                  username: { type: 'string', example: 'admin' },
-                  password: { type: 'string', example: 'monmotdepasse' },
-                },
+                oneOf: [
+                  {
+                    title: 'Admin',
+                    type: 'object',
+                    required: ['username', 'password'],
+                    properties: {
+                      username: { type: 'string', example: 'admin' },
+                      password: { type: 'string', example: 'Azerty123!' },
+                    },
+                  },
+                  {
+                    title: 'Utilisateur',
+                    type: 'object',
+                    required: ['email', 'password'],
+                    properties: {
+                      email: {
+                        type: 'string',
+                        format: 'email',
+                        example: 'user@example.com',
+                      },
+                      password: { type: 'string', example: 'monmotdepasse' },
+                    },
+                  },
+                ],
               },
             },
           },
@@ -99,6 +128,7 @@ export const openApiSpec = {
               },
             },
           },
+          400: { description: 'Champs requis manquants' },
           401: { description: 'Identifiants invalides' },
         },
       },
@@ -199,11 +229,157 @@ export const openApiSpec = {
         },
       },
     },
+    '/ui/users': {
+      get: {
+        summary: 'Lister tous les utilisateurs',
+        tags: ['Admin — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Liste des utilisateurs',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    users: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/User' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+        },
+      },
+      post: {
+        summary: 'Créer un utilisateur',
+        tags: ['Admin — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'email', 'password'],
+                properties: {
+                  name: { type: 'string', example: 'Alice' },
+                  email: {
+                    type: 'string',
+                    format: 'email',
+                    example: 'alice@example.com',
+                  },
+                  password: { type: 'string', example: 'monmotdepasse' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Utilisateur créé',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    user: { $ref: '#/components/schemas/User' },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Champs requis manquants' },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+          409: { description: 'Email déjà utilisé' },
+        },
+      },
+    },
+    '/ui/users/{userId}': {
+      patch: {
+        summary: 'Modifier un utilisateur',
+        tags: ['Admin — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  email: { type: 'string', format: 'email' },
+                  password: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Utilisateur modifié',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { success: { type: 'boolean' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+          404: { description: 'Utilisateur introuvable' },
+        },
+      },
+      delete: {
+        summary: 'Supprimer un utilisateur',
+        tags: ['Admin — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Utilisateur supprimé',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { success: { type: 'boolean' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Rôle admin requis' },
+          404: { description: 'Utilisateur introuvable' },
+        },
+      },
+    },
     '/ui/users/{userId}/feed': {
       get: {
-        summary: "Fil de contenu d'un utilisateur",
+        summary: "Fil de contenu complet d'un utilisateur",
         description:
-          'Retourne les flux configurés et le contenu associé pour un utilisateur.',
+          "Retourne les flux configurés et le contenu associé (tous connecteurs). Accessible par l'utilisateur lui-même ou un admin.",
         tags: ['UI — Utilisateurs'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -242,7 +418,52 @@ export const openApiSpec = {
             },
           },
           401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Accès refusé' },
+        },
+      },
+    },
+    '/ui/users/{userId}/feed/{connector}': {
+      get: {
+        summary: "Fil de contenu d'un utilisateur pour un connecteur",
+        description:
+          "Retourne uniquement le contenu du connecteur spécifié pour l'utilisateur. Accessible par l'utilisateur lui-même ou un admin.",
+        tags: ['UI — Utilisateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'connector',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              enum: ['changelog', 'youtube', 'rss', 'scrap'],
+            },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Contenu du connecteur',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    connector: { type: 'string' },
+                    data: { type: 'array', items: {} },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+          403: { description: 'Accès refusé' },
+          404: { description: 'Connecteur inconnu' },
         },
       },
     },
@@ -290,7 +511,9 @@ export const openApiSpec = {
                 schema: {
                   type: 'object',
                   properties: {
-                    repository: { $ref: '#/components/schemas/UserRepository' },
+                    repository: {
+                      $ref: '#/components/schemas/UserRepository',
+                    },
                   },
                 },
               },
@@ -298,7 +521,7 @@ export const openApiSpec = {
           },
           400: { description: 'provider et url requis' },
           401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Accès refusé' },
           409: { description: 'Déjà abonné à ce flux' },
         },
       },
@@ -337,7 +560,7 @@ export const openApiSpec = {
             },
           },
           401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Accès refusé' },
           404: { description: 'Flux introuvable' },
         },
       },
