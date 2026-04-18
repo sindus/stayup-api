@@ -1,4 +1,4 @@
-import { compare, hash } from 'bcryptjs'
+import { hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type postgres from 'postgres'
 import { getSql } from '../db/client.js'
@@ -120,24 +120,22 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
   const now = new Date().toISOString()
 
   try {
-    await sql.begin(async (tx) => {
-      await tx`
-        INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
-        VALUES (${userId}, ${body.name}, ${body.email}, ${now}, ${now}, false)
-      `
-      await tx`
-        INSERT INTO account (id, user_id, provider_id, account_id, password, created_at, updated_at)
-        VALUES (
-          ${accountId},
-          ${userId},
-          'credential',
-          ${body.email},
-          ${passwordHash},
-          ${now},
-          ${now}
-        )
-      `
-    })
+    await sql`
+      INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
+      VALUES (${userId}, ${body.name}, ${body.email}, ${now}, ${now}, false)
+    `
+    await sql`
+      INSERT INTO account (id, user_id, provider_id, account_id, password, created_at, updated_at)
+      VALUES (
+        ${accountId},
+        ${userId},
+        'credential',
+        ${body.email},
+        ${passwordHash},
+        ${now},
+        ${now}
+      )
+    `
   } catch (err) {
     if ((err as { code?: string }).code === '23505') {
       return c.json({ error: 'Email already in use' }, 409)
@@ -153,7 +151,7 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
 
 // PATCH /ui/users/:userId — update a user
 uiUsersRoute.patch('/:userId', requireAdmin, async (c) => {
-  const userId = c.req.param('userId')
+  const userId = c.req.param('userId') as string
   const body = await c.req.json<{
     name?: string
     email?: string
@@ -163,17 +161,19 @@ uiUsersRoute.patch('/:userId', requireAdmin, async (c) => {
   const sql = getSql(c.env.DATABASE_URL)
   const now = new Date().toISOString()
 
-  if (body.name || body.email) {
-    const [updated] = await sql<{ id: string }[]>`
+  if (body.name !== undefined || body.email !== undefined) {
+    const name: string | null = body.name ?? null
+    const email: string | null = body.email ?? null
+    const result = await sql<{ id: string }[]>`
       UPDATE "user"
       SET
-        name       = COALESCE(${body.name ?? null}, name),
-        email      = COALESCE(${body.email ?? null}, email),
+        name       = COALESCE(${name}, name),
+        email      = COALESCE(${email}, email),
         updated_at = ${now}
       WHERE id = ${userId}
       RETURNING id
     `
-    if (!updated) return c.json({ error: 'User not found' }, 404)
+    if (result.length === 0) return c.json({ error: 'User not found' }, 404)
   }
 
   if (body.password) {
@@ -190,14 +190,14 @@ uiUsersRoute.patch('/:userId', requireAdmin, async (c) => {
 
 // DELETE /ui/users/:userId — delete a user
 uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
-  const userId = c.req.param('userId')
+  const userId = c.req.param('userId') as string
   const sql = getSql(c.env.DATABASE_URL)
 
-  const [deleted] = await sql<{ id: string }[]>`
+  const result = await sql<{ id: string }[]>`
     DELETE FROM "user" WHERE id = ${userId} RETURNING id
   `
 
-  if (!deleted) return c.json({ error: 'User not found' }, 404)
+  if (result.length === 0) return c.json({ error: 'User not found' }, 404)
 
   return c.json({ success: true })
 })
@@ -206,7 +206,7 @@ uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
 
 // GET /ui/users/:userId/feed
 uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
-  const userId = c.req.param('userId')
+  const userId = c.req.param('userId') as string
   const sql = getSql(c.env.DATABASE_URL)
   const data = await getFeedForUser(sql, userId)
   return c.json(data)
@@ -214,8 +214,8 @@ uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
 
 // GET /ui/users/:userId/feed/:connector
 uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
-  const userId = c.req.param('userId')
-  const connector = c.req.param('connector')
+  const userId = c.req.param('userId') as string
+  const connector = c.req.param('connector') as string
 
   const allowedTables: Record<string, string> = {
     changelog: 'connector_changelog',
@@ -236,7 +236,9 @@ uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
     WHERE ur.user_id = ${userId} AND r.type = ${connector}
   `
 
-  const repoIds = repositories.map((r) => r.repository_id)
+  const repoIds = repositories.map(
+    (r: { repository_id: number }) => r.repository_id,
+  )
   const data = await getLatestItemsForRepos(sql, table, repoIds)
 
   return c.json({ connector, data })
@@ -244,7 +246,7 @@ uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
 
 // POST /ui/users/:userId/repositories
 uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
-  const userId = c.req.param('userId')
+  const userId = c.req.param('userId') as string
   const body = await c.req.json<{
     provider: string
     url: string
@@ -304,17 +306,17 @@ uiUsersRoute.delete(
   '/:userId/repositories/:linkId',
   requireSelfOrAdmin,
   async (c) => {
-    const userId = c.req.param('userId')
-    const linkId = c.req.param('linkId')
+    const userId = c.req.param('userId') as string
+    const linkId = c.req.param('linkId') as string
     const sql = getSql(c.env.DATABASE_URL)
 
-    const [deleted] = await sql<{ id: string }[]>`
-    DELETE FROM user_repository
-    WHERE id = ${linkId} AND user_id = ${userId}
-    RETURNING id
-  `
+    const result = await sql<{ id: string }[]>`
+      DELETE FROM user_repository
+      WHERE id = ${linkId} AND user_id = ${userId}
+      RETURNING id
+    `
 
-    if (!deleted) {
+    if (result.length === 0) {
       return c.json({ error: 'Flux introuvable' }, 404)
     }
 
