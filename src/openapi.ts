@@ -529,6 +529,8 @@ export const openApiSpec = {
     '/ui/users/{userId}/repositories/{linkId}': {
       delete: {
         summary: "Supprimer un flux d'un utilisateur",
+        description:
+          "**Utilisateur** : supprime le lien. Si ce flux n'est plus abonné par aucun autre utilisateur, supprime aussi le repository et toutes les données connector associées.\n\n**Admin** : supprime toujours le repository et toutes les données connector associées, quel que soit le nombre d'abonnés.",
         tags: ['UI — Utilisateurs'],
         security: [{ bearerAuth: [] }],
         parameters: [

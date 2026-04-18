@@ -301,6 +301,28 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   }
 })
 
+const connectorTable: Record<string, string> = {
+  changelog: 'connector_changelog',
+  youtube: 'connector_youtube',
+  rss: 'connector_rss',
+  scrap: 'connector_scrap',
+}
+
+async function purgeRepository(
+  sql: postgres.Sql,
+  repositoryId: number,
+  type: string,
+): Promise<void> {
+  const table = connectorTable[type]
+  if (table) {
+    await sql.unsafe(`DELETE FROM "${table}" WHERE repository_id = $1`, [
+      repositoryId,
+    ])
+  }
+  await sql`DELETE FROM user_repository WHERE repository_id = ${repositoryId}`
+  await sql`DELETE FROM repository WHERE id = ${repositoryId}`
+}
+
 // DELETE /ui/users/:userId/repositories/:linkId
 uiUsersRoute.delete(
   '/:userId/repositories/:linkId',
@@ -310,14 +332,30 @@ uiUsersRoute.delete(
     const linkId = c.req.param('linkId') as string
     const sql = getSql(c.env.DATABASE_URL)
 
-    const result = await sql<{ id: string }[]>`
-      DELETE FROM user_repository
-      WHERE id = ${linkId} AND user_id = ${userId}
-      RETURNING id
+    const [link] = await sql<{ repository_id: number; type: string }[]>`
+      SELECT ur.repository_id, r.type
+      FROM user_repository ur
+      JOIN repository r ON r.id = ur.repository_id
+      WHERE ur.id = ${linkId} AND ur.user_id = ${userId}
     `
 
-    if (result.length === 0) {
-      return c.json({ error: 'Flux introuvable' }, 404)
+    if (!link) return c.json({ error: 'Flux introuvable' }, 404)
+
+    const payload = c.get('jwtPayload') as { role?: string }
+    const isAdmin = payload?.role === 'admin'
+
+    if (isAdmin) {
+      await purgeRepository(sql, link.repository_id, link.type)
+    } else {
+      await sql`DELETE FROM user_repository WHERE id = ${linkId}`
+      const [{ count }] = await sql<{ count: string }[]>`
+        SELECT COUNT(*) AS count
+        FROM user_repository
+        WHERE repository_id = ${link.repository_id}
+      `
+      if (Number.parseInt(count, 10) === 0) {
+        await purgeRepository(sql, link.repository_id, link.type)
+      }
     }
 
     return c.json({ success: true })
