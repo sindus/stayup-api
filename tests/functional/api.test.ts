@@ -16,6 +16,11 @@ const FUNCTIONAL_ENV: Bindings = {
   JWT_SECRET: 'test-secret',
   API_USERNAME: 'testadmin',
   API_PASSWORD: 'testpass',
+  UI_URL: 'http://localhost:3001',
+  GOOGLE_CLIENT_ID: '',
+  GOOGLE_CLIENT_SECRET: '',
+  GITHUB_CLIENT_ID: '',
+  GITHUB_CLIENT_SECRET: '',
 }
 
 const sql = getSql(FUNCTIONAL_ENV.DATABASE_URL)
