@@ -37,8 +37,11 @@ async function queryLatestPerProvider(
   table: string,
 ): Promise<unknown[]> {
   const cols = await getTableColumns(sql, table)
-  // connector_rss / connector_scrap use repository_id; others use provider_id
-  const fkCol = cols.has('provider_id') ? 'provider_id' : 'repository_id'
+  const fkCol = cols.has('provider_id')
+    ? 'provider_id'
+    : cols.has('repository_id')
+      ? 'repository_id'
+      : 'doc_registry_id'
   // connector_scrap has no datetime column
   const orderExpr = cols.has('datetime')
     ? 'COALESCE(datetime, executed_at)'
