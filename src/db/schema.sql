@@ -107,3 +107,35 @@ CREATE TABLE IF NOT EXISTS user_repository (
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, repository_id)
 );
+
+-- ─── Documentation (managed by stayup-doc) ───────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS doc_registry (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  url        TEXT NOT NULL,
+  config     JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS connector_doc (
+  id               SERIAL PRIMARY KEY,
+  doc_registry_id  INTEGER NOT NULL REFERENCES doc_registry(id),
+  content          TEXT NOT NULL,
+  content_hash     TEXT NOT NULL,
+  diff             TEXT,
+  version          INTEGER NOT NULL,
+  is_current       BOOLEAN NOT NULL DEFAULT TRUE,
+  scraped_at       TIMESTAMPTZ NOT NULL,
+  archived_at      TIMESTAMPTZ,
+  executed_at      TIMESTAMPTZ NOT NULL,
+  success          BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS user_doc_registry (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  doc_registry_id  INTEGER NOT NULL REFERENCES doc_registry(id) ON DELETE CASCADE,
+  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, doc_registry_id)
+);

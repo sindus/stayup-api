@@ -273,6 +273,11 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     return c.json({ error: 'provider and url are required' }, 400)
   }
 
+  const jwtPayload = c.get('jwtPayload') as { role?: string }
+  if (body.provider === 'scrap' && jwtPayload?.role !== 'admin') {
+    return c.json({ error: 'Scrap feeds are managed by admins' }, 403)
+  }
+
   const sql = getSql(c.env.DATABASE_URL)
 
   const [repo] = await sql<{ id: number }[]>`
@@ -360,7 +365,10 @@ uiUsersRoute.delete(
     const payload = c.get('jwtPayload') as { role?: string }
     const isAdmin = payload?.role === 'admin'
 
-    if (isAdmin) {
+    // Scrap repos are admin-managed: never cascade-delete, just remove the subscription
+    if (link.type === 'scrap') {
+      await sql`DELETE FROM user_repository WHERE id = ${linkId}`
+    } else if (isAdmin) {
       await purgeRepository(sql, link.repository_id, link.type)
     } else {
       await sql`DELETE FROM user_repository WHERE id = ${linkId}`

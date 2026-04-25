@@ -15,6 +15,32 @@ const connectorTable: Record<string, string> = {
   scrap: 'connector_scrap',
 }
 
+// POST / — create a new repository (scrap or other types)
+adminRepositoriesRoute.post('/', async (c) => {
+  const body = await c.req.json<{
+    url: string
+    type: string
+    config: Record<string, unknown>
+  }>()
+
+  if (!body.url || !body.type) {
+    return c.json({ error: 'url and type are required' }, 400)
+  }
+
+  const sql = getSql(c.env.DATABASE_URL)
+
+  const [repo] = await sql<{ id: number }[]>`
+    INSERT INTO repository (url, type, config)
+    VALUES (${body.url}, ${body.type}, ${JSON.stringify(body.config ?? {})}::jsonb)
+    ON CONFLICT (url) DO UPDATE SET
+      type   = EXCLUDED.type,
+      config = EXCLUDED.config
+    RETURNING id
+  `
+
+  return c.json({ id: repo.id, url: body.url, type: body.type }, 201)
+})
+
 // GET / — list all repositories with subscriber count
 adminRepositoriesRoute.get('/', async (c) => {
   const sql = getSql(c.env.DATABASE_URL)
