@@ -1,0 +1,43 @@
+{
+  "name": "stayup-api",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:functional": "vitest run tests/functional",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "prepare": "husky",
+    "create-user": "tsx scripts/create-user.ts",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@scalar/hono-api-reference": "^0.10.3",
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.6.14",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.73.0"
+  }
+}

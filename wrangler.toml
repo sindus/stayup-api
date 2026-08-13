@@ -1,0 +1,13 @@
+name = "stayup-api"
+main = "src/app.ts"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (à définir via `wrangler secret put`) :
+#   DATABASE_URL  — ex: postgres://user:pass@host/dbname
+#   JWT_SECRET    — clé de signature JWT
+#   API_USERNAME  — identifiant du compte service (utilisé par stayup-ui)
+#   API_PASSWORD  — mot de passe du compte service
+
+[observability]
+enabled = true
