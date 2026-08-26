@@ -8,46 +8,17 @@ CREATE TABLE IF NOT EXISTS repository (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ─── Connectors ───────────────────────────────────────────────────────────────
+-- ─── Provider registry ──────────────────────────────────────────────────────────
+-- Chaque provider (projet indépendant type stayup-cmd-*) possède sa propre table
+-- connector_<name> (créée par ce projet, pas par l'API) et déclare ici son nom affiché
+-- au démarrage. L'API découvre la liste des providers disponibles via
+-- information_schema (tables connector_*) et enrichit avec le display_name trouvé ici.
 
-CREATE TABLE IF NOT EXISTS connector_changelog (
-  id            SERIAL PRIMARY KEY,
-  repository_id INTEGER NOT NULL REFERENCES repository(id),
-  version       TEXT,
-  content       TEXT NOT NULL,
-  diff          TEXT,
-  datetime      TIMESTAMPTZ,
-  executed_at   TIMESTAMPTZ NOT NULL,
-  success       BOOLEAN NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS connector_youtube (
-  id            SERIAL PRIMARY KEY,
-  repository_id INTEGER NOT NULL REFERENCES repository(id),
-  version       TEXT,
-  content       TEXT NOT NULL,
-  diff          TEXT,
-  datetime      TIMESTAMPTZ,
-  executed_at   TIMESTAMPTZ NOT NULL,
-  success       BOOLEAN NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS connector_rss (
-  id            SERIAL PRIMARY KEY,
-  repository_id INTEGER NOT NULL REFERENCES repository(id),
-  content       TEXT NOT NULL,
-  datetime      TIMESTAMPTZ,
-  executed_at   TIMESTAMPTZ NOT NULL,
-  success       BOOLEAN NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS connector_scrap (
-  id            SERIAL PRIMARY KEY,
-  repository_id INTEGER NOT NULL REFERENCES repository(id),
-  content       TEXT NOT NULL,
-  params        JSONB NOT NULL,
-  executed_at   TIMESTAMPTZ NOT NULL,
-  success       BOOLEAN NOT NULL
+CREATE TABLE IF NOT EXISTS provider_registry (
+  name         TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 100,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ─── Auth (Better Auth — managed by stayup-ui) ────────────────────────────────

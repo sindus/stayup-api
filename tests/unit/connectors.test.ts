@@ -14,6 +14,51 @@ vi.mock('../../src/db/client.js', () => ({
 
 import { getSql } from '../../src/db/client.js'
 
+describe('GET /connectors/providers', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns discovered providers enriched with their display name', async () => {
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([
+        { table_name: 'connector_changelog' },
+        { table_name: 'connector_youtube' },
+      ]) // getConnectorTables
+      .mockResolvedValueOnce([
+        { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
+      ]) // provider_registry (pas de ligne pour 'changelog' → fallback)
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.providers).toEqual([
+      { name: 'youtube', displayName: 'YouTube' },
+      { name: 'changelog', displayName: 'Changelog' },
+    ])
+  })
+
+  it('returns an empty list when no connector table exists', async () => {
+    const sql = createSqlMock()
+    sql.mockResolvedValueOnce([])
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).providers).toEqual([])
+  })
+})
+
 describe('GET /connectors (auth)', () => {
   it('returns 401 without token', async () => {
     mockSql([])

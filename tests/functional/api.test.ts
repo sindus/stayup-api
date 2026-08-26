@@ -36,6 +36,36 @@ beforeAll(async () => {
   )
   await sql.unsafe(schema)
 
+  // connector_changelog / connector_youtube appartiennent normalement aux projets
+  // collecteurs indépendants (stayup-cmd-changelog, stayup-cmd-youtube) — recréées ici
+  // uniquement pour les besoins des tests fonctionnels de stayup-api, en suivant le
+  // même contrat qu'un vrai collecteur (table connector_<name> + ligne provider_registry).
+  await sql.unsafe(`
+    CREATE TABLE IF NOT EXISTS connector_changelog (
+      id            SERIAL PRIMARY KEY,
+      repository_id INTEGER NOT NULL REFERENCES repository(id),
+      version       TEXT,
+      content       TEXT NOT NULL,
+      diff          TEXT,
+      datetime      TIMESTAMPTZ,
+      executed_at   TIMESTAMPTZ NOT NULL,
+      success       BOOLEAN NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS connector_youtube (
+      id            SERIAL PRIMARY KEY,
+      repository_id INTEGER NOT NULL REFERENCES repository(id),
+      version       TEXT,
+      content       TEXT NOT NULL,
+      diff          TEXT,
+      datetime      TIMESTAMPTZ,
+      executed_at   TIMESTAMPTZ NOT NULL,
+      success       BOOLEAN NOT NULL
+    );
+    INSERT INTO provider_registry (name, display_name, sort_order)
+    VALUES ('changelog', 'Changelog', 10), ('youtube', 'YouTube', 20)
+    ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name;
+  `)
+
   // Seed a "user" row so user_repository FK is satisfied
   await sql.unsafe(
     `INSERT INTO "user" (id, name, email, email_verified, created_at, updated_at)
@@ -152,6 +182,22 @@ describe('GET /connectors', () => {
     const body = await json(res)
     expect(body.connectors).toHaveProperty('changelog')
     expect(body.connectors).toHaveProperty('youtube')
+  })
+})
+
+describe('GET /connectors/providers', () => {
+  it('returns the discovered providers with their display name', async () => {
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    const changelog = body.providers.find(
+      (p: { name: string }) => p.name === 'changelog',
+    )
+    expect(changelog).toEqual({ name: 'changelog', displayName: 'Changelog' })
   })
 })
 

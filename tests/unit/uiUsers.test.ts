@@ -355,7 +355,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 404 for an unknown connector', async () => {
-    const sql = mockSql([])
+    const sql = mockSql([[]]) // getTableForProvider: aucune table trouvée
     const res = await app.request(
       '/ui/users/1/feed/inconnu',
       { headers: await authHeaders('admin') },
@@ -363,11 +363,12 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
     )
     expect(res.status).toBe(404)
     expect((await json(res)).error).toBe('Unknown connector')
-    expect(sql).not.toHaveBeenCalled()
+    expect(sql).toHaveBeenCalledTimes(1)
   })
 
   it('returns the connector items for a subscribed user', async () => {
     mockSql([
+      [{ table_name: 'connector_rss' }], // getTableForProvider
       [{ repository_id: 3 }], // repositories de l'utilisateur
       [{ id: 10, repository_id: 3, content: 'entrée rss' }], // sql.unsafe
     ])
@@ -383,7 +384,10 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   })
 
   it('returns an empty list when the user has no repository of that type', async () => {
-    mockSql([[]])
+    mockSql([
+      [{ table_name: 'connector_youtube' }], // getTableForProvider
+      [], // repositories de l'utilisateur : aucun
+    ])
     const res = await app.request(
       '/ui/users/1/feed/youtube',
       { headers: await authHeaders('admin') },
@@ -425,6 +429,7 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
   it('purges the repository for an admin on a non-scrap feed', async () => {
     const sql = mockSql([
       [{ repository_id: 5, type: 'rss' }], // SELECT link
+      [{ table_name: 'connector_rss' }], // getTableForProvider
       [], // sql.unsafe : DELETE connector_rss
       [], // DELETE user_repository
       [], // DELETE repository
@@ -443,6 +448,7 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
       [{ repository_id: 5, type: 'rss' }], // SELECT link
       [], // DELETE user_repository
       [{ count: '0' }], // plus aucun abonné
+      [{ table_name: 'connector_rss' }], // getTableForProvider
       [], // sql.unsafe : DELETE connector_rss
       [], // DELETE user_repository
       [], // DELETE repository

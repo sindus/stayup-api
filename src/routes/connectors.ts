@@ -1,6 +1,10 @@
 import { Hono } from 'hono'
-import type postgres from 'postgres'
 import { getSql } from '../db/client.js'
+import {
+  getConnectorTables,
+  getProviders,
+  queryLatestPerProvider,
+} from '../db/providerRegistry.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -9,46 +13,18 @@ export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
 
-async function getConnectorTables(sql: postgres.Sql): Promise<string[]> {
-  const rows = await sql<{ table_name: string }[]>`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name LIKE ${'connector_%'}
-    ORDER BY table_name
-  `
-  return rows.map((r) => r.table_name)
-}
-
-async function getTableColumns(
-  sql: postgres.Sql,
-  table: string,
-): Promise<Set<string>> {
-  const rows = await sql<{ column_name: string }[]>`
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = ${table}
-  `
-  return new Set(rows.map((r) => r.column_name))
-}
-
-async function queryLatestPerProvider(
-  sql: postgres.Sql,
-  table: string,
-): Promise<unknown[]> {
-  const cols = await getTableColumns(sql, table)
-  const fkCol = cols.has('provider_id') ? 'provider_id' : 'repository_id'
-  // connector_scrap has no datetime column
-  const orderExpr = cols.has('datetime')
-    ? 'COALESCE(datetime, executed_at)'
-    : 'executed_at'
-
-  return sql.unsafe(`
-    SELECT DISTINCT ON ("${fkCol}") *
-    FROM "${table}"
-    ORDER BY "${fkCol}", ${orderExpr} DESC
-  `)
-}
+// GET /connectors/providers — liste légère des providers disponibles (nom + libellé),
+// pour construire une UI dynamique sans tirer toutes les données.
+connectorsRoute.get('/providers', async (c) => {
+  const sql = getSql(c.env.DATABASE_URL)
+  const providers = await getProviders(sql)
+  return c.json({
+    providers: providers.map(({ name, displayName }) => ({
+      name,
+      displayName,
+    })),
+  })
+})
 
 connectorsRoute.get('/', async (c) => {
   const sql = getSql(c.env.DATABASE_URL)

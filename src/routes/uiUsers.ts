@@ -1,8 +1,8 @@
 import { hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type postgres from 'postgres'
-import { connectorTable } from '../connectorTables.js'
 import { getSql } from '../db/client.js'
+import { getProviders, getTableForProvider } from '../db/providerRegistry.js'
 import { createCredentialUser } from '../db/users.js'
 import {
   authMiddleware,
@@ -71,23 +71,25 @@ async function getFeedForUser(
     ORDER BY ur.created_at
   `
 
+  const providers = await getProviders(sql)
+
   if (repositories.length === 0) {
     return {
       repositories: [],
-      connectors: { changelog: [], youtube: [], rss: [], scrap: [] },
+      connectors: Object.fromEntries(providers.map((p) => [p.name, []])),
     }
   }
 
   const repoIds = repositories.map((r) => r.repository_id)
 
-  const [changelog, youtube, rss, scrap] = await Promise.all([
-    getLatestItemsForRepos(sql, 'connector_changelog', repoIds),
-    getLatestItemsForRepos(sql, 'connector_youtube', repoIds),
-    getLatestItemsForRepos(sql, 'connector_rss', repoIds),
-    getLatestItemsForRepos(sql, 'connector_scrap', repoIds),
-  ])
+  const entries = await Promise.all(
+    providers.map(
+      async (p) =>
+        [p.name, await getLatestItemsForRepos(sql, p.table, repoIds)] as const,
+    ),
+  )
 
-  return { repositories, connectors: { changelog, youtube, rss, scrap } }
+  return { repositories, connectors: Object.fromEntries(entries) }
 }
 
 // ─── Admin-only: user management ────────────────────────────────────────────
@@ -215,11 +217,10 @@ uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
 uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
   const connector = c.req.param('connector') as string
-
-  const table = connectorTable[connector]
-  if (!table) return c.json({ error: 'Unknown connector' }, 404)
-
   const sql = getSql(c.env.DATABASE_URL)
+
+  const table = await getTableForProvider(sql, connector)
+  if (!table) return c.json({ error: 'Unknown connector' }, 404)
 
   const repositories = await sql<{ repository_id: number }[]>`
     SELECT ur.repository_id
@@ -303,7 +304,7 @@ async function purgeRepository(
   repositoryId: number,
   type: string,
 ): Promise<void> {
-  const table = connectorTable[type]
+  const table = await getTableForProvider(sql, type)
   if (table) {
     await sql.unsafe(`DELETE FROM "${table}" WHERE repository_id = $1`, [
       repositoryId,

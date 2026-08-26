@@ -124,7 +124,7 @@ A user submits a URL through `POST /scrap/requests`, which creates a request in 
 
 The schema lives in [`src/db/schema.sql`](src/db/schema.sql) and is applied automatically when the PostgreSQL container first starts and when functional tests run.
 
-Each source type feeds its own `connector_*` table (`changelog`, `youtube`, `rss`, `scrap`), attached to a `repository`. Subscriptions go through `user_repository`. The `/connectors` routes discover these tables dynamically, so adding a connector does not require touching their code.
+Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables via `information_schema` and reads their display name from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list.
 
 Authentication relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — these are managed by `stayup-ui`.
 

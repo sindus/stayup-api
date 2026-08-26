@@ -35,7 +35,8 @@ export const openApiSpec = {
           url: { type: 'string' },
           provider: {
             type: 'string',
-            enum: ['changelog', 'youtube', 'rss', 'scrap'],
+            description:
+              'Nom du provider (dynamique — voir GET /connectors/providers)',
           },
           config: { type: 'object' },
         },
@@ -292,12 +293,42 @@ export const openApiSpec = {
                   properties: {
                     connectors: {
                       type: 'object',
+                      description:
+                        'Une clé par provider découvert (voir GET /connectors/providers)',
                       additionalProperties: { type: 'array', items: {} },
-                      example: {
-                        changelog: [],
-                        youtube: [],
-                        rss: [],
-                        scrap: [],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+        },
+      },
+    },
+    '/connectors/providers': {
+      get: {
+        summary: 'Liste des providers découverts',
+        description:
+          "Providers disponibles (table connector_<name> présente en base), avec leur nom affiché depuis provider_registry. Sert à construire une UI dynamique (onglets, sélecteur d'ajout de flux) sans tirer toutes les données.",
+        tags: ['Connecteurs'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Liste des providers',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    providers: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          name: { type: 'string', example: 'youtube' },
+                          displayName: { type: 'string', example: 'YouTube' },
+                        },
                       },
                     },
                   },
@@ -346,11 +377,9 @@ export const openApiSpec = {
             name: 'name',
             in: 'path',
             required: true,
-            schema: {
-              type: 'string',
-              enum: ['changelog', 'youtube', 'rss', 'scrap'],
-            },
-            description: 'Nom du connecteur (sans le préfixe connector_)',
+            schema: { type: 'string' },
+            description:
+              'Nom du connecteur (sans le préfixe connector_) — voir GET /connectors/providers pour la liste disponible',
           },
         ],
         responses: {
@@ -580,12 +609,9 @@ export const openApiSpec = {
                     },
                     connectors: {
                       type: 'object',
-                      properties: {
-                        changelog: { type: 'array', items: {} },
-                        youtube: { type: 'array', items: {} },
-                        rss: { type: 'array', items: {} },
-                        scrap: { type: 'array', items: {} },
-                      },
+                      description:
+                        'Une clé par provider découvert (voir GET /connectors/providers)',
+                      additionalProperties: { type: 'array', items: {} },
                     },
                   },
                 },
@@ -615,10 +641,9 @@ export const openApiSpec = {
             name: 'connector',
             in: 'path',
             required: true,
-            schema: {
-              type: 'string',
-              enum: ['changelog', 'youtube', 'rss', 'scrap'],
-            },
+            schema: { type: 'string' },
+            description:
+              'Voir GET /connectors/providers pour la liste disponible',
           },
         ],
         responses: {
@@ -666,7 +691,8 @@ export const openApiSpec = {
                 properties: {
                   provider: {
                     type: 'string',
-                    enum: ['changelog', 'youtube', 'rss', 'scrap'],
+                    description:
+                      'Voir GET /connectors/providers pour la liste disponible',
                   },
                   url: {
                     type: 'string',
@@ -760,7 +786,8 @@ export const openApiSpec = {
                   url: { type: 'string' },
                   type: {
                     type: 'string',
-                    enum: ['changelog', 'youtube', 'rss', 'scrap'],
+                    description:
+                      'Voir GET /connectors/providers pour la liste disponible',
                   },
                   config: { type: 'object' },
                 },
@@ -808,10 +835,7 @@ export const openApiSpec = {
                         properties: {
                           id: { type: 'integer' },
                           url: { type: 'string' },
-                          type: {
-                            type: 'string',
-                            enum: ['changelog', 'youtube', 'rss', 'scrap'],
-                          },
+                          type: { type: 'string' },
                           config: { type: 'object' },
                           subscriber_count: { type: 'string' },
                         },

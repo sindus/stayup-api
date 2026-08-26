@@ -90,7 +90,9 @@ describe('DELETE /ui/repositories/:repoId/data', () => {
 
   it('clears connector data and returns success', async () => {
     const sql = createSqlMock()
-    sql.mockResolvedValueOnce([{ id: 1, type: 'changelog' }])
+    sql
+      .mockResolvedValueOnce([{ id: 1, type: 'changelog' }]) // SELECT repository
+      .mockResolvedValueOnce([{ table_name: 'connector_changelog' }]) // getTableForProvider
     sql.unsafe = vi.fn().mockResolvedValueOnce([]) // DELETE FROM connector_changelog
     vi.mocked(getSql).mockReturnValue(sql as never)
 
@@ -106,7 +108,9 @@ describe('DELETE /ui/repositories/:repoId/data', () => {
 
   it('succeeds even when connector type has no table (e.g. unknown type)', async () => {
     const sql = createSqlMock()
-    sql.mockResolvedValueOnce([{ id: 1, type: 'unknown' }])
+    sql
+      .mockResolvedValueOnce([{ id: 1, type: 'unknown' }]) // SELECT repository
+      .mockResolvedValueOnce([]) // getTableForProvider: aucune table trouvée
     sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 
@@ -144,12 +148,12 @@ describe('DELETE /ui/repositories/:repoId', () => {
 
   it('purges repository completely for admin', async () => {
     const sql = createSqlMock()
-    sql.mockResolvedValueOnce([{ id: 1, type: 'rss' }])
-    sql.unsafe = vi.fn().mockResolvedValueOnce([]) // DELETE connector data
-    // DELETE user_repository and DELETE repository are template literal calls
     sql
+      .mockResolvedValueOnce([{ id: 1, type: 'rss' }]) // SELECT repository
+      .mockResolvedValueOnce([{ table_name: 'connector_rss' }]) // getTableForProvider
       .mockResolvedValueOnce([]) // DELETE user_repository
       .mockResolvedValueOnce([]) // DELETE repository
+    sql.unsafe = vi.fn().mockResolvedValueOnce([]) // DELETE connector data
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { connectorTable } from '../connectorTables.js'
 import { getSql } from '../db/client.js'
+import { getTableForProvider } from '../db/providerRegistry.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -70,7 +70,7 @@ adminRepositoriesRoute.delete('/:repoId/data', async (c) => {
   `
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
 
-  const table = connectorTable[repo.type]
+  const table = await getTableForProvider(sql, repo.type)
   if (table) {
     await sql.unsafe(`DELETE FROM "${table}" WHERE repository_id = $1`, [
       repoId,
@@ -93,7 +93,7 @@ adminRepositoriesRoute.delete('/:repoId', async (c) => {
   `
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
 
-  const table = connectorTable[repo.type]
+  const table = await getTableForProvider(sql, repo.type)
   if (table) {
     await sql.unsafe(`DELETE FROM "${table}" WHERE repository_id = $1`, [
       repoId,
