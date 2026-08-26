@@ -3,6 +3,8 @@
 [![CI](https://github.com/stayup-app/stayup-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stayup-app/stayup-api/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+**Website:** https://stayup-ui.vercel.app
+
 HTTP API that aggregates content from several sources — changelogs, YouTube channels, RSS feeds and scraped pages — and serves it back as per-user feeds.
 
 Built with [Hono](https://hono.dev) and PostgreSQL, deployed on Cloudflare Workers.
