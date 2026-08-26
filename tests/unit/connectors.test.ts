@@ -43,6 +43,31 @@ describe('GET /connectors/providers', () => {
     ])
   })
 
+  it('falls back to capitalized names when provider_registry is missing', async () => {
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([
+        { table_name: 'connector_changelog' },
+        { table_name: 'connector_youtube' },
+      ]) // getConnectorTables
+      .mockRejectedValueOnce(
+        new Error('relation "provider_registry" does not exist'),
+      ) // base sur laquelle aucun collecteur à jour n'a encore tourné
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).providers).toEqual([
+      { name: 'changelog', displayName: 'Changelog' },
+      { name: 'youtube', displayName: 'Youtube' },
+    ])
+  })
+
   it('returns an empty list when no connector table exists', async () => {
     const sql = createSqlMock()
     sql.mockResolvedValueOnce([])

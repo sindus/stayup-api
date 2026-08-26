@@ -65,13 +65,17 @@ export async function getProviders(sql: postgres.Sql): Promise<Provider[]> {
   if (tables.length === 0) return []
 
   const names = tables.map((t) => t.slice(CONNECTOR_PREFIX.length))
+  // `provider_registry` n'appartient pas à l'API : c'est le premier collecteur démarré
+  // qui la crée. Sur une base où aucun collecteur à jour n'a encore tourné, la table
+  // est absente — ce n'est pas une erreur, juste un registre vide : chaque provider
+  // retombe sur son nom capitalisé, comme pour une ligne manquante.
   const registry = await sql<
     { name: string; display_name: string; sort_order: number }[]
   >`
     SELECT name, display_name, sort_order
     FROM provider_registry
     WHERE name = ANY(${names})
-  `
+  `.catch(() => [])
   const meta = new Map(registry.map((r) => [r.name, r]))
 
   return names
