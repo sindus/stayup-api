@@ -2,7 +2,7 @@ export const openApiSpec = {
   openapi: '3.1.0',
   info: {
     title: 'StayUp API',
-    version: '0.1.0',
+    version: '2.0.0',
     description:
       'API HTTP exposant les données StayUp — connecteurs, utilisateurs et fils de contenu.',
   },
