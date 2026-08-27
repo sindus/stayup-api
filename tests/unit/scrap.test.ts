@@ -107,7 +107,8 @@ describe('POST /scrap/:repoId/subscribe', () => {
   })
 
   it('subscribes the user and returns 201', async () => {
-    mockSql([[{ id: 1 }], []])
+    // L'INSERT rend la ligne créée : le mock doit la fournir.
+    mockSql([[{ id: 1, type: 'scrap' }], [{ id: 'link-1', repository_id: 1 }]])
     const res = await app.request(
       '/scrap/1/subscribe',
       { method: 'POST', headers: await userHeaders() },
@@ -120,7 +121,7 @@ describe('POST /scrap/:repoId/subscribe', () => {
   it('returns 409 when already subscribed', async () => {
     const sql = createSqlMock()
     sql
-      .mockResolvedValueOnce([{ id: 1 }]) // SELECT repository
+      .mockResolvedValueOnce([{ id: 1, type: 'scrap' }]) // SELECT repository
       .mockImplementationOnce(() => {
         const err = new Error('duplicate') as Error & { code?: string }
         err.code = '23505'

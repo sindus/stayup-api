@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { sign, verify } from 'hono/jwt'
-import { getSql } from '../db/client.js'
+import type { DataStore } from '../db/port.js'
+import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
 import type { Bindings } from '../types.js'
 
@@ -76,9 +77,9 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     name: string
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
   const token = await findOrCreateOAuthUser(
-    sql,
+    store,
     'google',
     profile.id,
     // Un e-mail non vérifié ne doit jamais servir à retrouver un compte existant.
@@ -191,9 +192,9 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
       ''
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
   const token = await findOrCreateOAuthUser(
-    sql,
+    store,
     'github',
     String(profile.id),
     email,
@@ -253,21 +254,15 @@ function isMobileRedirectUri(uri: string | undefined): uri is string {
 }
 
 async function findOrCreateOAuthUser(
-  sql: ReturnType<typeof getSql>,
+  store: DataStore,
   provider: string,
   providerAccountId: string,
   email: string,
   name: string,
   jwtSecret: string,
 ): Promise<string> {
-  const now = new Date().toISOString()
-
   // Check if OAuth account exists
-  const [existing] = await sql<{ user_id: string }[]>`
-    SELECT user_id FROM account
-    WHERE provider_id = ${provider} AND account_id = ${providerAccountId}
-    LIMIT 1
-  `
+  const existing = await store.findOAuthAccount(provider, providerAccountId)
 
   let userId: string
   let resolvedName: string
@@ -275,49 +270,37 @@ async function findOrCreateOAuthUser(
 
   if (existing) {
     userId = existing.user_id
-    const [u] = await sql<{ name: string; email: string }[]>`
-      SELECT name, email FROM "user" WHERE id = ${userId}
-    `
-    resolvedName = u?.name ?? name
-    resolvedEmail = u?.email ?? email
+    const identity = await store.getUserIdentity(userId)
+    resolvedName = identity?.name ?? name
+    resolvedEmail = identity?.email ?? email
   } else {
     const verifiedEmail = normalizeEmail(email)
 
     // Sans e-mail vérifié, on ne rattache rien : on ouvre un compte neuf avec une
-    // adresse de repli unique, sinon `user.email` (UNIQUE NOT NULL) rejette le
-    // deuxième inscrit sans e-mail et tous se retrouveraient sur le même compte.
-    const [byEmail] = verifiedEmail
-      ? await sql<{ id: string; name: string }[]>`
-          SELECT id, name FROM "user" WHERE LOWER(email) = ${verifiedEmail} LIMIT 1
-        `
-      : []
+    // adresse de repli unique, sinon l'unicité de l'e-mail rejette le deuxième
+    // inscrit sans e-mail et tous se retrouveraient sur le même compte.
+    const byEmail = verifiedEmail
+      ? await store.findUserByEmail(verifiedEmail)
+      : null
 
     if (byEmail) {
       userId = byEmail.id
       resolvedName = byEmail.name
       resolvedEmail = verifiedEmail
     } else {
-      userId = crypto.randomUUID()
       resolvedName = name
       resolvedEmail =
         verifiedEmail || `${provider}-${providerAccountId}@users.noreply.stayup`
-      await sql`
-        INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
-        VALUES (${userId}, ${name}, ${resolvedEmail}, ${now}, ${now}, ${Boolean(verifiedEmail)})
-      `
+      userId = (
+        await store.createOAuthUser({
+          name,
+          email: resolvedEmail,
+          emailVerified: Boolean(verifiedEmail),
+        })
+      ).id
     }
 
-    await sql`
-      INSERT INTO account (id, user_id, provider_id, account_id, created_at, updated_at)
-      VALUES (
-        ${crypto.randomUUID()},
-        ${userId},
-        ${provider},
-        ${providerAccountId},
-        ${now},
-        ${now}
-      )
-    `
+    await store.linkOAuthAccount(userId, provider, providerAccountId)
   }
 
   return sign(

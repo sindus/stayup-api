@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { getSql } from '../db/client.js'
+import { getStore } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -17,26 +17,16 @@ scrapRequestsUserRoute.post('/', async (c) => {
   if (!body.url?.trim()) return c.json({ error: 'url is required' }, 400)
 
   const url = body.url.trim()
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
 
-  const [existing] = await sql<{ id: string }[]>`
-    SELECT id FROM scrap_request
-    WHERE user_id = ${userId} AND url = ${url} AND status = 'pending'
-  `
+  const existing = await store.findPendingScrapRequest(userId, url)
   if (existing)
     return c.json(
       { error: 'A pending request already exists for this URL' },
       409,
     )
 
-  const id = crypto.randomUUID()
-  const [row] = await sql<
-    { id: string; url: string; status: string; created_at: string }[]
-  >`
-    INSERT INTO scrap_request (id, user_id, url)
-    VALUES (${id}, ${userId}, ${url})
-    RETURNING id, url, status, created_at
-  `
+  const row = await store.createScrapRequest(userId, url)
 
   return c.json(row, 201)
 })
@@ -50,23 +40,7 @@ scrapRequestsAdminRoute.use('*', requireAdmin)
 
 // GET /ui/scrap-requests — list all requests with requester email
 scrapRequestsAdminRoute.get('/', async (c) => {
-  const sql = getSql(c.env.DATABASE_URL)
-
-  const requests = await sql<
-    {
-      id: string
-      user_id: string
-      user_email: string
-      url: string
-      status: string
-      created_at: string
-    }[]
-  >`
-    SELECT sr.id, sr.user_id, u.email AS user_email, sr.url, sr.status, sr.created_at
-    FROM scrap_request sr
-    JOIN "user" u ON u.id = sr.user_id
-    ORDER BY sr.created_at DESC
-  `
+  const requests = await getStore(c.env.DATABASE_URL).listScrapRequests()
 
   return c.json({ requests })
 })
@@ -74,13 +48,9 @@ scrapRequestsAdminRoute.get('/', async (c) => {
 // POST /ui/scrap-requests/:id/approve — approve a request: create repo + auto-subscribe user
 scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
   const requestId = c.req.param('id')
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
 
-  const [request] = await sql<
-    { id: string; user_id: string; status: string }[]
-  >`
-    SELECT id, user_id, status FROM scrap_request WHERE id = ${requestId}
-  `
+  const request = await store.getScrapRequest(requestId)
   if (!request) return c.json({ error: 'Request not found' }, 404)
   if (request.status === 'approved')
     return c.json({ error: 'Request already approved' }, 409)
@@ -96,9 +66,7 @@ scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
   // Approuver une demande ne doit pas convertir en 'scrap' un dépôt déjà suivi sous
   // un autre provider : ses abonnés perdraient leur flux et les lignes connector_*
   // restées derrière empêcheraient toute suppression du dépôt.
-  const [conflicting] = await sql<{ id: number; type: string }[]>`
-    SELECT id, type FROM repository WHERE url = ${url}
-  `
+  const conflicting = await store.findSourceByUrl(url)
   if (conflicting && conflicting.type !== 'scrap') {
     return c.json(
       { error: 'This URL is already registered under another provider' },
@@ -106,26 +74,20 @@ scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
     )
   }
 
-  const [repo] = await sql<{ id: number }[]>`
-    INSERT INTO repository (url, type, config)
-    VALUES (${url}, 'scrap', ${JSON.stringify(body.config ?? {})}::jsonb)
-    ON CONFLICT (url) DO UPDATE SET config = EXCLUDED.config
-    RETURNING id
-  `
-
-  const linkId = crypto.randomUUID()
-  try {
-    await sql`
-      INSERT INTO user_repository (id, user_id, repository_id)
-      VALUES (${linkId}, ${request.user_id}, ${repo.id})
-    `
-  } catch (err) {
-    if ((err as { code?: string }).code !== '23505') throw err
+  let repo = conflicting
+  if (repo) {
+    await store.updateSourceConfig(repo.id, body.config ?? {})
+  } else {
+    repo = await store.createSource({
+      url,
+      type: 'scrap',
+      config: body.config ?? {},
+    })
   }
 
-  await sql`
-    UPDATE scrap_request SET status = 'approved' WHERE id = ${requestId}
-  `
+  // Un abonnement déjà présent n'est pas une erreur : la demande est approuvée.
+  await store.subscribe(request.user_id, repo.id)
+  await store.setScrapRequestStatus(requestId, 'approved')
 
   return c.json({ success: true, repository_id: repo.id })
 })
@@ -133,16 +95,14 @@ scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
 // POST /ui/scrap-requests/:id/reject — reject a pending request
 scrapRequestsAdminRoute.post('/:id/reject', async (c) => {
   const requestId = c.req.param('id')
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
 
-  const [request] = await sql<{ id: string; status: string }[]>`
-    SELECT id, status FROM scrap_request WHERE id = ${requestId}
-  `
+  const request = await store.getScrapRequest(requestId)
   if (!request) return c.json({ error: 'Request not found' }, 404)
   if (request.status !== 'pending')
     return c.json({ error: 'Request is not pending' }, 409)
 
-  await sql`UPDATE scrap_request SET status = 'rejected' WHERE id = ${requestId}`
+  await store.setScrapRequestStatus(requestId, 'rejected')
 
   return c.json({ success: true })
 })

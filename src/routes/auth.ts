@@ -1,8 +1,8 @@
-import { compare } from 'bcryptjs'
+import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import { sign } from 'hono/jwt'
-import { getSql } from '../db/client.js'
-import { createCredentialUser, normalizeEmail } from '../db/users.js'
+import { getStore } from '../db/store.js'
+import { normalizeEmail } from '../db/users.js'
 import { authMiddleware } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -54,24 +54,14 @@ authRoute.post('/login', async (c) => {
     return c.json({ error: 'email and password are required' }, 400)
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
+  const account = await store.findCredentialByEmail(normalizeEmail(body.email))
 
-  const rows = await sql<
-    { id: string; name: string; email: string; password: string }[]
-  >`
-    SELECT u.id, u.name, u.email, a.password
-    FROM "user" u
-    JOIN account a ON a.user_id = u.id
-    WHERE LOWER(u.email) = ${normalizeEmail(body.email)}
-      AND a.provider_id = 'credential'
-    LIMIT 1
-  `
-
-  if (rows.length === 0) {
+  if (!account) {
     return c.json({ error: 'Invalid credentials' }, 401)
   }
 
-  const { id: userId, name, email, password: passwordHash } = rows[0]
+  const { id: userId, name, email, password: passwordHash } = account
 
   const valid = await compare(body.password, passwordHash)
   if (!valid) {
@@ -120,8 +110,11 @@ authRoute.post('/register', async (c) => {
     return c.json({ error: 'name, email and password are required' }, 400)
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
-  const created = await createCredentialUser(sql, body)
+  const created = await getStore(c.env.DATABASE_URL).createCredentialUser({
+    name: body.name,
+    email: normalizeEmail(body.email),
+    passwordHash: await hash(body.password, 10),
+  })
 
   if (!created) {
     return c.json({ error: 'Email already in use' }, 409)

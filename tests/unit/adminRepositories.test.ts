@@ -208,7 +208,9 @@ describe('POST /ui/repositories', () => {
   })
 
   it('creates the repository and returns 201', async () => {
-    mockSql([[{ id: 7 }]])
+    // La route regarde d'abord si l'URL existe déjà, pour ne pas convertir
+    // silencieusement le type d'une source partagée.
+    mockSql([[], [{ id: 7, url: 'https://example.com/feed', type: 'rss' }]])
     const res = await app.request(
       '/ui/repositories',
       {

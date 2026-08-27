@@ -1,13 +1,9 @@
 import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
-import type postgres from 'postgres'
-import { getSql } from '../db/client.js'
-import {
-  getProviders,
-  getRepositoryFkColumn,
-  getTableForProvider,
-} from '../db/providerRegistry.js'
-import { createCredentialUser, normalizeEmail } from '../db/users.js'
+import type { DataStore } from '../db/port.js'
+import { listProviders } from '../db/providers.js'
+import { getStore } from '../db/store.js'
+import { normalizeEmail } from '../db/users.js'
 import {
   authMiddleware,
   requireAdmin,
@@ -28,60 +24,15 @@ type UserRepo = {
   config: Record<string, unknown>
 }
 
-async function getLatestItemsForRepos(
-  sql: postgres.Sql,
-  table: string,
-  repoIds: number[],
-  limit = 10,
-): Promise<unknown[]> {
-  if (repoIds.length === 0) return []
-  // La colonne de rattachement est résolue comme partout ailleurs : la coder en dur
-  // sur `repository_id` faisait apparaître vide tout provider bâti sur `provider_id`.
-  const fkCol = await getRepositoryFkColumn(sql, table)
-  try {
-    return await sql.unsafe(
-      `SELECT * FROM (
-        SELECT *,
-          ROW_NUMBER() OVER (
-            PARTITION BY "${fkCol}" ORDER BY executed_at DESC
-          ) AS _rn
-        FROM "${table}"
-        WHERE "${fkCol}" = ANY($1)
-      ) ranked
-      WHERE _rn <= ${limit}
-      ORDER BY "${fkCol}", executed_at DESC`,
-      [repoIds],
-    )
-  } catch (err) {
-    // Un provider dont la table ne respecte pas le contrat ne doit pas casser le
-    // feed entier, mais l'avaler en silence donnait un feed vide inexplicable.
-    console.error(`Failed to read connector table "${table}":`, err)
-    return []
-  }
-}
-
 async function getFeedForUser(
-  sql: postgres.Sql,
+  store: DataStore,
   userId: string,
 ): Promise<{
   repositories: UserRepo[]
   connectors: Record<string, unknown[]>
 }> {
-  const repositories = await sql<UserRepo[]>`
-    SELECT
-      ur.id,
-      ur.repository_id,
-      ur.created_at,
-      r.url,
-      r.type  AS provider,
-      r.config
-    FROM user_repository ur
-    JOIN repository r ON r.id = ur.repository_id
-    WHERE ur.user_id = ${userId}
-    ORDER BY ur.created_at
-  `
-
-  const providers = await getProviders(sql)
+  const repositories = await store.listSubscriptions(userId)
+  const providers = await listProviders(store)
 
   if (repositories.length === 0) {
     return {
@@ -91,11 +42,10 @@ async function getFeedForUser(
   }
 
   const repoIds = repositories.map((r) => r.repository_id)
-
   const entries = await Promise.all(
     providers.map(
       async (p) =>
-        [p.name, await getLatestItemsForRepos(sql, p.table, repoIds)] as const,
+        [p.name, await store.latestForSources(p.name, repoIds, 10)] as const,
     ),
   )
 
@@ -106,12 +56,7 @@ async function getFeedForUser(
 
 // GET /ui/users — list all users
 uiUsersRoute.get('/', requireAdmin, async (c) => {
-  const sql = getSql(c.env.DATABASE_URL)
-  const users = await sql<
-    { id: string; name: string; email: string; created_at: string }[]
-  >`
-    SELECT id, name, email, created_at FROM "user" ORDER BY created_at
-  `
+  const users = await getStore(c.env.DATABASE_URL).listUsers()
   return c.json({ users })
 })
 
@@ -127,8 +72,11 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
     return c.json({ error: 'name, email and password are required' }, 400)
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
-  const created = await createCredentialUser(sql, body)
+  const created = await getStore(c.env.DATABASE_URL).createCredentialUser({
+    name: body.name,
+    email: normalizeEmail(body.email),
+    passwordHash: await hash(body.password, 10),
+  })
 
   if (!created) {
     return c.json({ error: 'Email already in use' }, 409)
@@ -143,13 +91,7 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
 // GET /ui/users/:userId — get user profile (self or admin)
 uiUsersRoute.get('/:userId', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const sql = getSql(c.env.DATABASE_URL)
-
-  const [user] = await sql<
-    { id: string; name: string; email: string; created_at: string }[]
-  >`
-    SELECT id, name, email, created_at FROM "user" WHERE id = ${userId}
-  `
+  const user = await getStore(c.env.DATABASE_URL).getUser(userId)
 
   if (!user) return c.json({ error: 'User not found' }, 404)
 
@@ -166,15 +108,13 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     currentPassword?: string
   }>()
 
-  const sql = getSql(c.env.DATABASE_URL)
-  const now = new Date().toISOString()
+  const store = getStore(c.env.DATABASE_URL)
   const isAdmin = (c.get('jwtPayload') as { role?: string })?.role === 'admin'
 
   // Contrôle en amont : un body ne contenant que `password` doit aussi 404
-  const [existing] = await sql<{ id: string }[]>`
-    SELECT id FROM "user" WHERE id = ${userId}
-  `
-  if (!existing) return c.json({ error: 'User not found' }, 404)
+  if (!(await store.userExists(userId))) {
+    return c.json({ error: 'User not found' }, 404)
+  }
 
   // Changer son propre mot de passe exige de connaître l'actuel : sinon un token
   // volé suffit à verrouiller le compte de son propriétaire. Un admin garde la
@@ -183,15 +123,11 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     if (!body.currentPassword) {
       return c.json({ error: 'currentPassword is required' }, 400)
     }
-    const [account] = await sql<{ password: string | null }[]>`
-      SELECT password FROM account
-      WHERE user_id = ${userId} AND provider_id = 'credential'
-      LIMIT 1
-    `
-    if (!account?.password) {
+    const currentHash = await store.getCredentialHash(userId)
+    if (!currentHash) {
       return c.json({ error: 'No password set for this account' }, 409)
     }
-    if (!(await compare(body.currentPassword, account.password))) {
+    if (!(await compare(body.currentPassword, currentHash))) {
       return c.json({ error: 'Invalid credentials' }, 401)
     }
   }
@@ -201,14 +137,11 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     const email: string | null =
       body.email === undefined ? null : normalizeEmail(body.email)
     try {
-      await sql`
-        UPDATE "user"
-        SET
-          name       = COALESCE(${name}, name),
-          email      = COALESCE(${email}, email),
-          updated_at = ${now}
-        WHERE id = ${userId}
-      `
+      // L'adaptateur garde `account.account_id` aligné sur la nouvelle adresse.
+      await store.updateUser(userId, {
+        name: name ?? undefined,
+        email: email ?? undefined,
+      })
     } catch (err) {
       // Sans ça, un e-mail déjà pris remonte en 500 au lieu d'un conflit lisible.
       if ((err as { code?: string }).code === '23505') {
@@ -216,25 +149,10 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
       }
       throw err
     }
-
-    // `account.account_id` porte l'e-mail du compte 'credential' : le laisser en
-    // arrière ferait diverger les deux tables à chaque changement d'adresse.
-    if (email !== null) {
-      await sql`
-        UPDATE account
-        SET account_id = ${email}, updated_at = ${now}
-        WHERE user_id = ${userId} AND provider_id = 'credential'
-      `
-    }
   }
 
   if (body.password) {
-    const passwordHash = await hash(body.password, 10)
-    await sql`
-      UPDATE account
-      SET password = ${passwordHash}, updated_at = ${now}
-      WHERE user_id = ${userId} AND provider_id = 'credential'
-    `
+    await store.updateCredentialPassword(userId, await hash(body.password, 10))
   }
 
   return c.json({ success: true })
@@ -243,13 +161,9 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
 // DELETE /ui/users/:userId — delete a user
 uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const sql = getSql(c.env.DATABASE_URL)
+  const deleted = await getStore(c.env.DATABASE_URL).deleteUser(userId)
 
-  const result = await sql<{ id: string }[]>`
-    DELETE FROM "user" WHERE id = ${userId} RETURNING id
-  `
-
-  if (result.length === 0) return c.json({ error: 'User not found' }, 404)
+  if (!deleted) return c.json({ error: 'User not found' }, 404)
 
   return c.json({ success: true })
 })
@@ -259,8 +173,7 @@ uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
 // GET /ui/users/:userId/feed
 uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const sql = getSql(c.env.DATABASE_URL)
-  const data = await getFeedForUser(sql, userId)
+  const data = await getFeedForUser(getStore(c.env.DATABASE_URL), userId)
   return c.json(data)
 })
 
@@ -268,22 +181,14 @@ uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
 uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
   const connector = c.req.param('connector') as string
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
 
-  const table = await getTableForProvider(sql, connector)
-  if (!table) return c.json({ error: 'Unknown connector' }, 404)
+  if (!(await store.providerExists(connector))) {
+    return c.json({ error: 'Unknown connector' }, 404)
+  }
 
-  const repositories = await sql<{ repository_id: number }[]>`
-    SELECT ur.repository_id
-    FROM user_repository ur
-    JOIN repository r ON r.id = ur.repository_id
-    WHERE ur.user_id = ${userId} AND r.type = ${connector}
-  `
-
-  const repoIds = repositories.map(
-    (r: { repository_id: number }) => r.repository_id,
-  )
-  const data = await getLatestItemsForRepos(sql, table, repoIds)
+  const repoIds = await store.listSubscribedSourceIds(userId, connector)
+  const data = await store.latestForSources(connector, repoIds, 10)
 
   return c.json({ connector, data })
 })
@@ -306,7 +211,7 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     return c.json({ error: 'Scrap feeds are managed by admins' }, 403)
   }
 
-  const sql = getSql(c.env.DATABASE_URL)
+  const store = getStore(c.env.DATABASE_URL)
 
   // `repository` est partagée par tous les abonnés d'une même URL. Un ON CONFLICT
   // qui écrase `type`/`config` laissait n'importe quel utilisateur convertir le
@@ -314,9 +219,7 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   // et les lignes connector_* orphelines cassaient ensuite sa suppression). On ne
   // touche donc jamais à une ligne existante : on la réutilise, ou on refuse si
   // elle appartient à un autre provider.
-  const [existing] = await sql<{ id: number; type: string }[]>`
-    SELECT id, type FROM repository WHERE url = ${body.url}
-  `
+  const existing = await store.findSourceByUrl(body.url)
 
   if (existing && existing.type !== body.provider) {
     return c.json(
@@ -325,61 +228,38 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     )
   }
 
-  const [repo] = existing
-    ? [existing]
-    : await sql<{ id: number }[]>`
-        INSERT INTO repository (url, type, config)
-        VALUES (${body.url}, ${body.provider}, ${JSON.stringify(body.config)}::jsonb)
-        ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
-        RETURNING id
-      `
+  const repo =
+    existing ??
+    (await store.createSource({
+      url: body.url,
+      type: body.provider,
+      config: body.config,
+    }))
 
-  const linkId = crypto.randomUUID()
+  const link = await store.subscribe(userId, repo.id)
+  if (!link) return c.json({ error: 'Already subscribed' }, 409)
 
-  try {
-    const [link] = await sql<
-      {
-        id: string
-        repository_id: number
-        created_at: string
-      }[]
-    >`
-      INSERT INTO user_repository (id, user_id, repository_id)
-      VALUES (${linkId}, ${userId}, ${repo.id})
-      RETURNING id, repository_id, created_at
-    `
-    return c.json(
-      {
-        repository: {
-          ...link,
-          provider: body.provider,
-          url: body.url,
-          config: body.config,
-        },
+  return c.json(
+    {
+      repository: {
+        ...link,
+        provider: body.provider,
+        url: body.url,
+        config: body.config,
       },
-      201,
-    )
-  } catch (err) {
-    if ((err as { code?: string }).code === '23505') {
-      return c.json({ error: 'Already subscribed' }, 409)
-    }
-    throw err
-  }
+    },
+    201,
+  )
 })
 
 async function purgeRepository(
-  sql: postgres.Sql,
+  store: DataStore,
   repositoryId: number,
   type: string,
 ): Promise<void> {
-  const table = await getTableForProvider(sql, type)
-  if (table) {
-    await sql.unsafe(`DELETE FROM "${table}" WHERE repository_id = $1`, [
-      repositoryId,
-    ])
-  }
-  await sql`DELETE FROM user_repository WHERE repository_id = ${repositoryId}`
-  await sql`DELETE FROM repository WHERE id = ${repositoryId}`
+  await store.deleteContentForSource(type, repositoryId)
+  await store.deleteSubscriptionsForSource(repositoryId)
+  await store.deleteSource(repositoryId)
 }
 
 // DELETE /ui/users/:userId/repositories/:linkId
@@ -389,14 +269,8 @@ uiUsersRoute.delete(
   async (c) => {
     const userId = c.req.param('userId') as string
     const linkId = c.req.param('linkId') as string
-    const sql = getSql(c.env.DATABASE_URL)
-
-    const [link] = await sql<{ repository_id: number; type: string }[]>`
-      SELECT ur.repository_id, r.type
-      FROM user_repository ur
-      JOIN repository r ON r.id = ur.repository_id
-      WHERE ur.id = ${linkId} AND ur.user_id = ${userId}
-    `
+    const store = getStore(c.env.DATABASE_URL)
+    const link = await store.findSubscription(linkId, userId)
 
     if (!link) return c.json({ error: 'Feed not found' }, 404)
 
@@ -405,18 +279,13 @@ uiUsersRoute.delete(
 
     // Scrap repos are admin-managed: never cascade-delete, just remove the subscription
     if (link.type === 'scrap') {
-      await sql`DELETE FROM user_repository WHERE id = ${linkId}`
+      await store.unsubscribeById(linkId)
     } else if (isAdmin) {
-      await purgeRepository(sql, link.repository_id, link.type)
+      await purgeRepository(store, link.repository_id, link.type)
     } else {
-      await sql`DELETE FROM user_repository WHERE id = ${linkId}`
-      const [{ count }] = await sql<{ count: string }[]>`
-        SELECT COUNT(*) AS count
-        FROM user_repository
-        WHERE repository_id = ${link.repository_id}
-      `
-      if (Number.parseInt(count, 10) === 0) {
-        await purgeRepository(sql, link.repository_id, link.type)
+      await store.unsubscribeById(linkId)
+      if ((await store.countSubscribers(link.repository_id)) === 0) {
+        await purgeRepository(store, link.repository_id, link.type)
       }
     }
 
