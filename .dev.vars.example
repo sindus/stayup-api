@@ -1,2 +1,3 @@
+# Le schéma choisit le moteur : postgres:// mysql:// sqlite:// mongodb://
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/stayup
 JWT_SECRET=changeme

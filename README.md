@@ -7,7 +7,7 @@
 
 HTTP API that aggregates content from several sources — changelogs, YouTube channels, RSS feeds and scraped pages — and serves it back as per-user feeds.
 
-Built with [Hono](https://hono.dev) and PostgreSQL, deployed on Cloudflare Workers.
+Built with [Hono](https://hono.dev), deployed on Cloudflare Workers. It stores nothing itself: it reads a database you own — PostgreSQL, MySQL/MariaDB, SQLite or MongoDB.
 
 ## Stack
 
@@ -15,8 +15,8 @@ Built with [Hono](https://hono.dev) and PostgreSQL, deployed on Cloudflare Worke
 |---|---|
 | Runtime | Node.js 22 · Cloudflare Workers |
 | Framework | Hono 4 |
-| Database | PostgreSQL 17 ([postgres.js](https://github.com/porsager/postgres) client) |
-| Tests | Vitest — 151 unit and functional tests |
+| Databases | PostgreSQL · MySQL/MariaDB · SQLite · MongoDB — one adapter each, behind a single contract |
+| Tests | Vitest — 272 tests, of which a conformance suite every adapter must pass |
 | Quality | Biome (lint + format) · strict TypeScript |
 | Documentation | OpenAPI 3.1 · [Scalar](https://scalar.com) UI |
 
@@ -47,7 +47,7 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | built from `DB_*` | PostgreSQL connection string |
+| `DATABASE_URL` | built from `DB_*` | Connection string. Its scheme picks the engine — see [Databases](#databases) |
 | `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | `localhost` `5432` `stayup` `postgres` `postgres` | Alternative to `DATABASE_URL` |
 | `JWT_SECRET` | `changeme` | Token signing key — **change this in production** |
 | `API_USERNAME` `API_PASSWORD` | `admin` `changeme` | Admin service account credentials |
@@ -122,11 +122,34 @@ OAuth sign-up automatically links the account to an existing user when the email
 
 A user submits a URL through `POST /scrap/requests`, which creates a request in `pending` state. An admin then handles it with `POST /ui/scrap-requests/:id/approve` — the feed is created and the requester subscribed automatically — or `POST /ui/scrap-requests/:id/reject`.
 
-## Database
+## Databases
 
-The schema lives in [`src/db/schema.sql`](src/db/schema.sql) and is applied automatically when the PostgreSQL container first starts and when functional tests run.
+The API speaks to no engine directly. It calls the storage contract in
+[`src/db/port.ts`](src/db/port.ts), and one adapter per engine fulfils it. The scheme of
+`DATABASE_URL` picks the adapter:
 
-Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables via `information_schema` and reads their display name from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list.
+| Engine | URL scheme | Driver to install | Schema |
+|---|---|---|---|
+| PostgreSQL | `postgres://` `postgresql://` | — | [`src/db/schema.sql`](src/db/schema.sql) |
+| MySQL / MariaDB | `mysql://` `mariadb://` | `npm install mysql2` | [`src/db/schema.mysql.sql`](src/db/schema.mysql.sql) |
+| SQLite | `sqlite://` `file://` | `npm install better-sqlite3` | [`src/db/schema.sqlite.sql`](src/db/schema.sqlite.sql) |
+| MongoDB | `mongodb://` `mongodb+srv://` | `npm install mongodb` | none — collections are created on first write |
+
+Tables, collections and columns carry the same names whichever engine runs, so a provider
+is described once and only its dialect changes. What guarantees it is
+[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): twenty-four
+behaviours, stated without a single query or table name, that CI checks against a real
+PostgreSQL, MySQL, SQLite and MongoDB. Adding an engine means writing an adapter, passing
+that suite, and registering it in [`src/db/store.ts`](src/db/store.ts).
+
+Drivers load on demand, so a PostgreSQL deployment never pulls the others in — and none of
+them reaches the Cloudflare Workers bundle, where they could not run anyway: Workers only
+opens the kind of connection PostgreSQL uses, so the other three need Docker or Node.
+
+The PostgreSQL schema is applied automatically when the container first starts and when
+functional tests run.
+
+Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables — or, under MongoDB, `connector_*` collections — and reads their display name from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list.
 
 Authentication relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — these are managed by `stayup-ui`.
 
@@ -134,10 +157,11 @@ Authentication relies on the `user`, `account`, `session` and `verification` tab
 
 ```bash
 npm run test:unit        # fast, no dependency
-npm test                 # full, PostgreSQL required
+npm run test:conformance # the adapter contract, on an in-memory SQLite
+npm test                 # full — PostgreSQL, MySQL and MongoDB required
 ```
 
-Unit tests isolate each route by replacing the SQL layer with an ordered mock (`tests/helpers.ts`). Functional tests run against a real `stayup_test` database and check end-to-end flows.
+Unit tests isolate each route by replacing the SQL layer with an ordered mock (`tests/helpers.ts`). Functional tests run against a real `stayup_test` database and check end-to-end flows, and run the conformance suite against a real MySQL and MongoDB.
 
 Type checking covers source **and** tests through `tsconfig.test.json`. Lint, typecheck, build and tests all run in CI before any deployment.
 
