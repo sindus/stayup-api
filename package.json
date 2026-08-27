@@ -21,9 +21,7 @@
     "test:conformance": "vitest run tests/conformance"
   },
   "lint-staged": {
-    "*.{ts,tsx,js}": [
-      "biome check --write --no-errors-on-unmatched"
-    ]
+    "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
