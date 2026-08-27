@@ -20,6 +20,24 @@ import type {
 
 const CONNECTOR_PREFIX = 'connector_'
 
+/**
+ * Répare une config doublement sérialisée.
+ *
+ * L'écriture passait jusqu'ici une chaîne suivie de `::jsonb` : postgres.js en
+ * déduisait le type du paramètre et la sérialisait une seconde fois, si bien que
+ * la base stockait un jsonb de type `string` au lieu de `object`. L'écriture est
+ * corrigée, mais les lignes déjà en base le sont restées — on les rend lisibles
+ * ici plutôt que par une migration qu'aucun auto-hébergeur ne penserait à lancer.
+ */
+function repairConfig<T extends { config?: unknown }>(row: T): T {
+  if (typeof row.config !== 'string') return row
+  try {
+    return { ...row, config: JSON.parse(row.config) }
+  } catch {
+    return row
+  }
+}
+
 export class PostgresStore implements DataStore {
   constructor(private readonly sql: postgres.Sql) {}
 
@@ -29,7 +47,7 @@ export class PostgresStore implements DataStore {
     const rows = await this.sql<{ table_name: string }[]>`
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
         AND table_name LIKE ${`${CONNECTOR_PREFIX}%`}
       ORDER BY table_name
     `
@@ -46,7 +64,7 @@ export class PostgresStore implements DataStore {
     const [row] = await this.sql<{ table_name: string }[]>`
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = ${CONNECTOR_PREFIX + name}
+      WHERE table_schema = current_schema() AND table_name = ${CONNECTOR_PREFIX + name}
     `
     return Boolean(row)
   }
@@ -73,7 +91,7 @@ export class PostgresStore implements DataStore {
     const rows = await this.sql<{ column_name: string }[]>`
       SELECT column_name
       FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = ${table}
+      WHERE table_schema = current_schema() AND table_name = ${table}
     `
     return new Set(rows.map((r) => r.column_name))
   }
@@ -147,14 +165,14 @@ export class PostgresStore implements DataStore {
     const [row] = await this.sql<Source[]>`
       SELECT id, url, type, config FROM repository WHERE url = ${url}
     `
-    return row ?? null
+    return row ? repairConfig(row) : null
   }
 
   async getSource(id: number): Promise<Source | null> {
     const [row] = await this.sql<Source[]>`
       SELECT id, url, type, config FROM repository WHERE id = ${id}
     `
-    return row ?? null
+    return row ? repairConfig(row) : null
   }
 
   async createSource(input: {
@@ -164,11 +182,11 @@ export class PostgresStore implements DataStore {
   }): Promise<Source> {
     const [row] = await this.sql<Source[]>`
       INSERT INTO repository (url, type, config)
-      VALUES (${input.url}, ${input.type}, ${JSON.stringify(input.config ?? {})}::jsonb)
+      VALUES (${input.url}, ${input.type}, ${this.sql.json((input.config ?? {}) as postgres.JSONValue) as never})
       ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
       RETURNING id, url, type, config
     `
-    return row
+    return repairConfig(row)
   }
 
   async updateSourceConfig(
@@ -176,7 +194,7 @@ export class PostgresStore implements DataStore {
     config: Record<string, unknown>,
   ): Promise<void> {
     await this.sql`
-      UPDATE repository SET config = ${JSON.stringify(config ?? {})}::jsonb WHERE id = ${id}
+      UPDATE repository SET config = ${this.sql.json((config ?? {}) as postgres.JSONValue) as never} WHERE id = ${id}
     `
   }
 
@@ -187,7 +205,7 @@ export class PostgresStore implements DataStore {
   async listSourcesWithSubscriberCount(): Promise<
     (Source & { subscriber_count: string })[]
   > {
-    return this.sql<(Source & { subscriber_count: string })[]>`
+    const rows = await this.sql<(Source & { subscriber_count: string })[]>`
       SELECT r.id, r.url, r.type, r.config,
         COUNT(ur.id)::text AS subscriber_count
       FROM repository r
@@ -195,13 +213,14 @@ export class PostgresStore implements DataStore {
       GROUP BY r.id
       ORDER BY r.id
     `
+    return rows.map(repairConfig)
   }
 
   async listSourcesOfType(
     type: string,
     userId: string,
   ): Promise<(Source & { is_subscribed: boolean })[]> {
-    return this.sql<(Source & { is_subscribed: boolean })[]>`
+    const rows = await this.sql<(Source & { is_subscribed: boolean })[]>`
       SELECT
         r.id, r.url, r.type, r.config, r.created_at,
         EXISTS (
@@ -212,18 +231,20 @@ export class PostgresStore implements DataStore {
       WHERE r.type = ${type}
       ORDER BY r.id
     `
+    return rows.map(repairConfig)
   }
 
   // ── Abonnements ───────────────────────────────────────────────────────────
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
-    return this.sql<SubscriptionRow[]>`
+    const rows = await this.sql<SubscriptionRow[]>`
       SELECT ur.id, ur.repository_id, ur.created_at, r.url, r.type AS provider, r.config
       FROM user_repository ur
       JOIN repository r ON r.id = ur.repository_id
       WHERE ur.user_id = ${userId}
       ORDER BY ur.created_at
     `
+    return rows.map(repairConfig)
   }
 
   async listSubscribedSourceIds(

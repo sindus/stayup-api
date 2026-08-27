@@ -44,8 +44,9 @@ export async function json<T = any>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
-// Tag SQL factice : appelable comme template littéral, plus .unsafe() et .begin().
-export type SqlMock = Mock & { unsafe: Mock; begin: Mock }
+// Tag SQL factice : appelable comme template littéral, plus .unsafe(), .begin()
+// et .json() — l'adaptateur passe les configs par ce dernier.
+export type SqlMock = Mock & { unsafe: Mock; begin: Mock; json: Mock }
 
 export function createSqlMock(): SqlMock {
   const sql = Object.assign(vi.fn(), {
@@ -53,6 +54,8 @@ export function createSqlMock(): SqlMock {
     // `sql.begin(fn)` exécute fn avec le même tag factice : les requêtes de la
     // transaction sont donc comptées comme les autres dans l'ordre des appels.
     begin: vi.fn(),
+    // postgres.js emballe la valeur pour la typer en jsonb ; ici, elle passe telle quelle.
+    json: vi.fn((value: unknown) => value),
   }) as SqlMock
   sql.begin.mockImplementation((fn: (tx: SqlMock) => unknown) => fn(sql))
   return sql
