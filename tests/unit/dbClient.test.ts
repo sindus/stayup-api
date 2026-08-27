@@ -38,3 +38,33 @@ describe('closeSql', () => {
     await expect(closeSql()).resolves.toBeUndefined()
   })
 })
+
+// Le choix du moteur se fait sur le schéma de l'URL : c'est le point d'entrée du
+// support multi-base, et une URL non reconnue doit se voir refuser tout de suite
+// plutôt que d'échouer à la première requête.
+describe('getStore', () => {
+  it('accepts the postgres schemes', async () => {
+    const { getStore } = await import('../../src/db/store.js')
+    for (const url of [
+      CONNECTION_STRING,
+      CONNECTION_STRING.replace('postgres:', 'postgresql:'),
+    ]) {
+      expect(getStore(url)).toBeTruthy()
+    }
+  })
+
+  it('names the supported schemes when the engine is unknown', async () => {
+    const { getStore, SUPPORTED_SCHEMES } = await import(
+      '../../src/db/store.js'
+    )
+    for (const url of [
+      'mysql://x/y',
+      'mongodb://x/y',
+      'sqlite:///tmp/db',
+      'nonsense',
+    ]) {
+      expect(() => getStore(url)).toThrow(/non prise en charge/)
+    }
+    expect(SUPPORTED_SCHEMES).toContain('postgres:')
+  })
+})
