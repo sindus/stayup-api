@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { closeSql, getSql } from '../../src/db/client.js'
+import { closeSql, getSql, trackOpenConnections } from '../../src/db/client.js'
 
 const CONNECTION_STRING = 'postgres://user:pass@localhost:5432/db'
+
+// closeSql() ne ferme que les connexions suivies : le suivi est opt-in.
+trackOpenConnections(true)
 
 afterEach(async () => {
   await closeSql()

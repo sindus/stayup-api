@@ -39,6 +39,18 @@ export async function getTableColumns(
   return new Set(rows.map((r) => r.column_name))
 }
 
+/** Colonne de rattachement d'une table connector_* à `repository`. Le contrat
+ *  documenté impose `repository_id` ; `provider_id` reste toléré pour les tables
+ *  historiques. Tous les accès aux données d'un provider passent par ici, sinon un
+ *  provider tiers s'affiche vide sans le moindre message (voir uiUsers.ts). */
+export async function getRepositoryFkColumn(
+  sql: postgres.Sql,
+  table: string,
+): Promise<string> {
+  const cols = await getTableColumns(sql, table)
+  return cols.has('provider_id') ? 'provider_id' : 'repository_id'
+}
+
 export async function queryLatestPerProvider(
   sql: postgres.Sql,
   table: string,

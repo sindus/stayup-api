@@ -187,7 +187,7 @@ describe('GET /auth/oauth/google/callback', () => {
         okResponse({ id: 'g-1', email: 'alice@example.com', name: 'Alice' }),
       )
     mockSql(NEW_USER_DB)
-    const state = await signedState('google', 'stayup://auth')
+    const state = await signedState('google', 'stayup://auth/callback')
 
     const res = await app.request(
       `/auth/oauth/google/callback?code=abc&state=${state}`,
@@ -196,7 +196,7 @@ describe('GET /auth/oauth/google/callback', () => {
     )
 
     const location = res.headers.get('location') as string
-    expect(location.startsWith('stayup://auth?token=')).toBe(true)
+    expect(location.startsWith('stayup://auth/callback?token=')).toBe(true)
   })
 
   it('ignores a redirect_uri that is not a known mobile scheme', async () => {
@@ -375,5 +375,51 @@ describe('résolution du compte OAuth', () => {
     )
     expect(payload.email).toBe('alice@example.com')
     expect(sql).toHaveBeenCalledTimes(4) // SELECT ×2 + INSERT ×2
+  })
+})
+
+// Le redirect_uri est choisi par l'appelant avant la signature du state : seule une
+// liste blanche empêche de faire livrer le token de la victime chez un tiers.
+describe('redirect_uri mobile — liste blanche', () => {
+  async function callbackLocation(redirectUri: string): Promise<string> {
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ access_token: 'at' }))
+      .mockResolvedValueOnce(
+        okResponse({ id: 'g-1', email: 'alice@example.com', name: 'Alice' }),
+      )
+    mockSql(NEW_USER_DB)
+    const state = await signedState('google', redirectUri)
+    const res = await app.request(
+      `/auth/oauth/google/callback?code=abc&state=${state}`,
+      {},
+      TEST_ENV,
+    )
+    return res.headers.get('location') as string
+  }
+
+  it('rejects an exp:// URI pointing at a public host', async () => {
+    const location = await callbackLocation(
+      'exp://evil.example.com/--/auth/callback',
+    )
+    expect(location.startsWith(TEST_ENV.UI_URL)).toBe(true)
+  })
+
+  it('rejects an exp:// URI on a private host but another path', async () => {
+    const location = await callbackLocation('exp://192.168.1.20:8081/--/steal')
+    expect(location.startsWith(TEST_ENV.UI_URL)).toBe(true)
+  })
+
+  it('rejects a stayup:// URI that is not the app callback', async () => {
+    const location = await callbackLocation('stayup://evil')
+    expect(location.startsWith(TEST_ENV.UI_URL)).toBe(true)
+  })
+
+  it('accepts the Expo Go URI on a private host', async () => {
+    const location = await callbackLocation(
+      'exp://192.168.1.20:8081/--/auth/callback',
+    )
+    expect(
+      location.startsWith('exp://192.168.1.20:8081/--/auth/callback?token='),
+    ).toBe(true)
   })
 })

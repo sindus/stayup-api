@@ -1,3 +1,4 @@
+import { hash } from 'bcryptjs'
 import { sign } from 'hono/jwt'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
@@ -170,6 +171,171 @@ describe('PATCH /ui/users/:userId', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(200)
+  })
+})
+
+describe('PATCH /ui/users/:userId — changement de mot de passe', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('refuses to change its own password without the current one', async () => {
+    mockSql([[{ id: '1' }]])
+    const res = await app.request(
+      '/ui/users/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: 'brand-new-password' }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses a wrong current password', async () => {
+    mockSql([
+      [{ id: '1' }], // SELECT user
+      [{ password: await hash('the-real-one', 4) }], // SELECT account
+    ])
+    const res = await app.request(
+      '/ui/users/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          password: 'brand-new-password',
+          currentPassword: 'wrong',
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('accepts the change once the current password checks out', async () => {
+    mockSql([
+      [{ id: '1' }], // SELECT user
+      [{ password: await hash('the-real-one', 4) }], // SELECT account
+      [], // UPDATE account
+    ])
+    const res = await app.request(
+      '/ui/users/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          password: 'brand-new-password',
+          currentPassword: 'the-real-one',
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('lets an admin reset a password without the current one', async () => {
+    mockSql([[{ id: '99' }], []])
+    const res = await app.request(
+      '/ui/users/99',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: 'reset-by-admin' }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('reports a taken email as a conflict instead of a 500', async () => {
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([{ id: '1' }]) // SELECT user
+      .mockRejectedValueOnce(
+        Object.assign(new Error('duplicate'), { code: '23505' }),
+      )
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/ui/users/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: 'taken@example.com' }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(409)
+  })
+})
+
+describe('POST /ui/users/:userId/repositories', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('reuses an existing repository without rewriting its type or config', async () => {
+    const sql = mockSql([
+      [{ id: 7, type: 'changelog' }], // SELECT repository (déjà présent)
+      [{ id: 'link-1', repository_id: 7, created_at: 'now' }], // INSERT user_repository
+    ])
+    const res = await app.request(
+      '/ui/users/1/repositories',
+      {
+        method: 'POST',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'changelog',
+          url: 'https://github.com/facebook/react',
+          config: {},
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+    // Aucun INSERT INTO repository : la ligne partagée reste intacte.
+    // call[0] est la TemplateStringsArray du tag SQL : String() la recolle.
+    const statements = sql.mock.calls.map((call) => String(call[0]))
+    expect(statements.some((q) => q.includes('INSERT INTO repository'))).toBe(
+      false,
+    )
+  })
+
+  it('refuses to re-declare a known URL under another provider', async () => {
+    mockSql([[{ id: 7, type: 'changelog' }]])
+    const res = await app.request(
+      '/ui/users/1/repositories',
+      {
+        method: 'POST',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'rss',
+          url: 'https://github.com/facebook/react',
+          config: {},
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(409)
   })
 })
 
@@ -370,6 +536,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
     mockSql([
       [{ table_name: 'connector_rss' }], // getTableForProvider
       [{ repository_id: 3 }], // repositories de l'utilisateur
+      [{ column_name: 'repository_id' }], // getRepositoryFkColumn
       [{ id: 10, repository_id: 3, content: 'entrée rss' }], // sql.unsafe
     ])
     const res = await app.request(

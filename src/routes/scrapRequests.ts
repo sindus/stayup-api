@@ -93,12 +93,23 @@ scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
 
   const url = body.url.trim()
 
+  // Approuver une demande ne doit pas convertir en 'scrap' un dépôt déjà suivi sous
+  // un autre provider : ses abonnés perdraient leur flux et les lignes connector_*
+  // restées derrière empêcheraient toute suppression du dépôt.
+  const [conflicting] = await sql<{ id: number; type: string }[]>`
+    SELECT id, type FROM repository WHERE url = ${url}
+  `
+  if (conflicting && conflicting.type !== 'scrap') {
+    return c.json(
+      { error: 'This URL is already registered under another provider' },
+      409,
+    )
+  }
+
   const [repo] = await sql<{ id: number }[]>`
     INSERT INTO repository (url, type, config)
     VALUES (${url}, 'scrap', ${JSON.stringify(body.config ?? {})}::jsonb)
-    ON CONFLICT (url) DO UPDATE SET
-      type   = EXCLUDED.type,
-      config = EXCLUDED.config
+    ON CONFLICT (url) DO UPDATE SET config = EXCLUDED.config
     RETURNING id
   `
 

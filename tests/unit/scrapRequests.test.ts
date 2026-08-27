@@ -217,6 +217,7 @@ describe('POST /ui/scrap-requests/:id/approve', () => {
   it('approves request: creates repo, subscribes user, returns 200', async () => {
     mockSql([
       [{ id: 'req-uuid', user_id: '1', status: 'pending' }], // fetch request
+      [], // SELECT repository (aucun dépôt existant pour cette URL)
       [{ id: 42 }], // INSERT repository
       [], // INSERT user_repository
       [], // UPDATE scrap_request status

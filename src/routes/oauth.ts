@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { sign, verify } from 'hono/jwt'
 import { getSql } from '../db/client.js'
+import { normalizeEmail } from '../db/users.js'
 import type { Bindings } from '../types.js'
 
 export const oauthRoute = new Hono<{ Bindings: Bindings }>()
@@ -71,6 +72,7 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
   const profile = (await profileRes.json()) as {
     id: string
     email: string
+    verified_email?: boolean
     name: string
   }
 
@@ -79,7 +81,8 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     sql,
     'google',
     profile.id,
-    profile.email,
+    // Un e-mail non vérifié ne doit jamais servir à retrouver un compte existant.
+    profile.verified_email === false ? '' : profile.email,
     profile.name,
     c.env.JWT_SECRET,
   )
@@ -179,10 +182,12 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
       primary: boolean
       verified: boolean
     }[]
+    // Uniquement des adresses vérifiées : GitHub laisse ajouter n'importe quelle
+    // adresse à un compte sans la prouver, et l'ancien repli `emails[0]` permettait
+    // donc de se faire rattacher au compte StayUp d'un tiers.
     email =
       emails.find((e) => e.primary && e.verified)?.email ??
       emails.find((e) => e.verified)?.email ??
-      emails[0]?.email ??
       ''
   }
 
@@ -205,9 +210,46 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
+// L'URI de retour est fournie par l'appelant *avant* la signature du state : la
+// signer ne la rend donc pas fiable. Sans liste blanche, `exp://n-importe-quel-hote`
+// suffit à faire livrer le token de la victime chez un tiers.
+//
+// - `stayup://auth/callback` : le schéma de l'app installée (app.json), URI exacte.
+// - `exp://<hote>:<port>/--/auth/callback` : Expo Go en développement, où l'hôte est
+//   la machine du développeur — donc restreint à la boucle locale et aux plages IP
+//   privées, jamais à un hôte public.
+const STANDALONE_REDIRECT_URI = 'stayup://auth/callback'
+const EXPO_GO_PATH = '/--/auth/callback'
+
+function isPrivateHostname(hostname: string): boolean {
+  if (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1'
+  ) {
+    return true
+  }
+  const v4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!v4) return false
+  const [a, b] = [Number(v4[1]), Number(v4[2])]
+  if (a === 10) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return false
+}
+
 function isMobileRedirectUri(uri: string | undefined): uri is string {
   if (!uri) return false
-  return uri.startsWith('stayup://') || uri.startsWith('exp://')
+  if (uri === STANDALONE_REDIRECT_URI) return true
+  if (!uri.startsWith('exp://')) return false
+  try {
+    const parsed = new URL(uri)
+    return (
+      parsed.pathname === EXPO_GO_PATH && isPrivateHostname(parsed.hostname)
+    )
+  } catch {
+    return false
+  }
 }
 
 async function findOrCreateOAuthUser(
@@ -239,22 +281,29 @@ async function findOrCreateOAuthUser(
     resolvedName = u?.name ?? name
     resolvedEmail = u?.email ?? email
   } else {
-    // Check if user with same email exists
-    const [byEmail] = await sql<{ id: string; name: string }[]>`
-      SELECT id, name FROM "user" WHERE email = ${email} LIMIT 1
-    `
+    const verifiedEmail = normalizeEmail(email)
+
+    // Sans e-mail vérifié, on ne rattache rien : on ouvre un compte neuf avec une
+    // adresse de repli unique, sinon `user.email` (UNIQUE NOT NULL) rejette le
+    // deuxième inscrit sans e-mail et tous se retrouveraient sur le même compte.
+    const [byEmail] = verifiedEmail
+      ? await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM "user" WHERE LOWER(email) = ${verifiedEmail} LIMIT 1
+        `
+      : []
 
     if (byEmail) {
       userId = byEmail.id
       resolvedName = byEmail.name
-      resolvedEmail = email
+      resolvedEmail = verifiedEmail
     } else {
       userId = crypto.randomUUID()
       resolvedName = name
-      resolvedEmail = email
+      resolvedEmail =
+        verifiedEmail || `${provider}-${providerAccountId}@users.noreply.stayup`
       await sql`
         INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
-        VALUES (${userId}, ${name}, ${email}, ${now}, ${now}, true)
+        VALUES (${userId}, ${name}, ${resolvedEmail}, ${now}, ${now}, ${Boolean(verifiedEmail)})
       `
     }
 

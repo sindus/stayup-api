@@ -1,9 +1,13 @@
-import { hash } from 'bcryptjs'
+import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type postgres from 'postgres'
 import { getSql } from '../db/client.js'
-import { getProviders, getTableForProvider } from '../db/providerRegistry.js'
-import { createCredentialUser } from '../db/users.js'
+import {
+  getProviders,
+  getRepositoryFkColumn,
+  getTableForProvider,
+} from '../db/providerRegistry.js'
+import { createCredentialUser, normalizeEmail } from '../db/users.js'
 import {
   authMiddleware,
   requireAdmin,
@@ -31,21 +35,27 @@ async function getLatestItemsForRepos(
   limit = 10,
 ): Promise<unknown[]> {
   if (repoIds.length === 0) return []
+  // La colonne de rattachement est résolue comme partout ailleurs : la coder en dur
+  // sur `repository_id` faisait apparaître vide tout provider bâti sur `provider_id`.
+  const fkCol = await getRepositoryFkColumn(sql, table)
   try {
     return await sql.unsafe(
       `SELECT * FROM (
         SELECT *,
           ROW_NUMBER() OVER (
-            PARTITION BY repository_id ORDER BY executed_at DESC
+            PARTITION BY "${fkCol}" ORDER BY executed_at DESC
           ) AS _rn
         FROM "${table}"
-        WHERE repository_id = ANY($1)
+        WHERE "${fkCol}" = ANY($1)
       ) ranked
       WHERE _rn <= ${limit}
-      ORDER BY repository_id, executed_at DESC`,
+      ORDER BY "${fkCol}", executed_at DESC`,
       [repoIds],
     )
-  } catch {
+  } catch (err) {
+    // Un provider dont la table ne respecte pas le contrat ne doit pas casser le
+    // feed entier, mais l'avaler en silence donnait un feed vide inexplicable.
+    console.error(`Failed to read connector table "${table}":`, err)
     return []
   }
 }
@@ -153,10 +163,12 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     name?: string
     email?: string
     password?: string
+    currentPassword?: string
   }>()
 
   const sql = getSql(c.env.DATABASE_URL)
   const now = new Date().toISOString()
+  const isAdmin = (c.get('jwtPayload') as { role?: string })?.role === 'admin'
 
   // Contrôle en amont : un body ne contenant que `password` doit aussi 404
   const [existing] = await sql<{ id: string }[]>`
@@ -164,17 +176,56 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
   `
   if (!existing) return c.json({ error: 'User not found' }, 404)
 
+  // Changer son propre mot de passe exige de connaître l'actuel : sinon un token
+  // volé suffit à verrouiller le compte de son propriétaire. Un admin garde la
+  // réinitialisation sans preuve, c'est le sens de son rôle.
+  if (body.password && !isAdmin) {
+    if (!body.currentPassword) {
+      return c.json({ error: 'currentPassword is required' }, 400)
+    }
+    const [account] = await sql<{ password: string | null }[]>`
+      SELECT password FROM account
+      WHERE user_id = ${userId} AND provider_id = 'credential'
+      LIMIT 1
+    `
+    if (!account?.password) {
+      return c.json({ error: 'No password set for this account' }, 409)
+    }
+    if (!(await compare(body.currentPassword, account.password))) {
+      return c.json({ error: 'Invalid credentials' }, 401)
+    }
+  }
+
   if (body.name !== undefined || body.email !== undefined) {
     const name: string | null = body.name ?? null
-    const email: string | null = body.email ?? null
-    await sql`
-      UPDATE "user"
-      SET
-        name       = COALESCE(${name}, name),
-        email      = COALESCE(${email}, email),
-        updated_at = ${now}
-      WHERE id = ${userId}
-    `
+    const email: string | null =
+      body.email === undefined ? null : normalizeEmail(body.email)
+    try {
+      await sql`
+        UPDATE "user"
+        SET
+          name       = COALESCE(${name}, name),
+          email      = COALESCE(${email}, email),
+          updated_at = ${now}
+        WHERE id = ${userId}
+      `
+    } catch (err) {
+      // Sans ça, un e-mail déjà pris remonte en 500 au lieu d'un conflit lisible.
+      if ((err as { code?: string }).code === '23505') {
+        return c.json({ error: 'Email already in use' }, 409)
+      }
+      throw err
+    }
+
+    // `account.account_id` porte l'e-mail du compte 'credential' : le laisser en
+    // arrière ferait diverger les deux tables à chaque changement d'adresse.
+    if (email !== null) {
+      await sql`
+        UPDATE account
+        SET account_id = ${email}, updated_at = ${now}
+        WHERE user_id = ${userId} AND provider_id = 'credential'
+      `
+    }
   }
 
   if (body.password) {
@@ -257,14 +308,31 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
 
   const sql = getSql(c.env.DATABASE_URL)
 
-  const [repo] = await sql<{ id: number }[]>`
-    INSERT INTO repository (url, type, config)
-    VALUES (${body.url}, ${body.provider}, ${JSON.stringify(body.config)}::jsonb)
-    ON CONFLICT (url) DO UPDATE SET
-      type   = EXCLUDED.type,
-      config = EXCLUDED.config
-    RETURNING id
+  // `repository` est partagée par tous les abonnés d'une même URL. Un ON CONFLICT
+  // qui écrase `type`/`config` laissait n'importe quel utilisateur convertir le
+  // dépôt d'autrui (un changelog devenait un rss, ses abonnés perdaient leur flux,
+  // et les lignes connector_* orphelines cassaient ensuite sa suppression). On ne
+  // touche donc jamais à une ligne existante : on la réutilise, ou on refuse si
+  // elle appartient à un autre provider.
+  const [existing] = await sql<{ id: number; type: string }[]>`
+    SELECT id, type FROM repository WHERE url = ${body.url}
   `
+
+  if (existing && existing.type !== body.provider) {
+    return c.json(
+      { error: 'This URL is already registered under another provider' },
+      409,
+    )
+  }
+
+  const [repo] = existing
+    ? [existing]
+    : await sql<{ id: number }[]>`
+        INSERT INTO repository (url, type, config)
+        VALUES (${body.url}, ${body.provider}, ${JSON.stringify(body.config)}::jsonb)
+        ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
+        RETURNING id
+      `
 
   const linkId = crypto.randomUUID()
 

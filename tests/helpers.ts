@@ -44,11 +44,18 @@ export async function json<T = any>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
-// Tag SQL factice : appelable comme template littéral, plus une méthode .unsafe().
-export type SqlMock = Mock & { unsafe: Mock }
+// Tag SQL factice : appelable comme template littéral, plus .unsafe() et .begin().
+export type SqlMock = Mock & { unsafe: Mock; begin: Mock }
 
 export function createSqlMock(): SqlMock {
-  return Object.assign(vi.fn(), { unsafe: vi.fn() }) as SqlMock
+  const sql = Object.assign(vi.fn(), {
+    unsafe: vi.fn(),
+    // `sql.begin(fn)` exécute fn avec le même tag factice : les requêtes de la
+    // transaction sont donc comptées comme les autres dans l'ordre des appels.
+    begin: vi.fn(),
+  }) as SqlMock
+  sql.begin.mockImplementation((fn: (tx: SqlMock) => unknown) => fn(sql))
+  return sql
 }
 
 // Remplace getSql par un tag SQL factice qui répond dans l'ordre des appels.
@@ -60,6 +67,7 @@ export function mockSql(responses: unknown[]): SqlMock {
   const sql = createSqlMock()
   sql.mockImplementation(next)
   sql.unsafe.mockImplementation(next)
+  sql.begin.mockImplementation((fn: (tx: SqlMock) => unknown) => fn(sql))
 
   vi.mocked(getSql).mockReturnValue(sql as never)
   return sql

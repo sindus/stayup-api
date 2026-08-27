@@ -278,6 +278,36 @@ export const openApiSpec = {
         },
       },
     },
+    '/auth/me': {
+      get: {
+        summary: 'Identité portée par le token',
+        description:
+          "Valide la signature et l'expiration du token, puis renvoie son identité. " +
+          'Destiné aux clients qui ne connaissent pas JWT_SECRET et ne peuvent donc ' +
+          'que décoder le payload sans le vérifier.',
+        tags: ['Authentification'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Identité du porteur du token',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    userId: { type: 'string' },
+                    role: { type: 'string', enum: ['user', 'admin'] },
+                    name: { type: 'string' },
+                    email: { type: 'string', format: 'email' },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Token absent, invalide ou expiré' },
+        },
+      },
+    },
     '/connectors': {
       get: {
         summary: 'Toutes les données de tous les connecteurs',

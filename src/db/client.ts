@@ -13,7 +13,20 @@ import postgres from 'postgres'
 // marche sur un serveur Node classique, mais viole cette règle sur Workers
 // et fait planter (500) toute requête qui atterrit sur un isolate ayant déjà
 // servi une requête précédente. On crée donc une connexion par appel.
+//
+// Corollaire : ces connexions ne peuvent pas être retenues indéfiniment. Le registre
+// ci-dessous ne sert qu'à `closeSql()` (tests, arrêt propre d'un serveur Node) et
+// reste donc désactivé par défaut : l'activer en production ferait grossir le Set à
+// chaque requête sur un isolate réchauffé, sans que rien ne l'en retire jamais.
 const open = new Set<postgres.Sql>()
+let tracking = false
+
+/** Active le suivi des connexions ouvertes, nécessaire à `closeSql()`. Réservé aux
+ *  tests et aux processus longs qui veulent s'arrêter proprement. */
+export function trackOpenConnections(enabled: boolean): void {
+  tracking = enabled
+  if (!enabled) open.clear()
+}
 
 export function getSql(connectionString: string): postgres.Sql {
   const sql = postgres(connectionString, {
@@ -23,11 +36,11 @@ export function getSql(connectionString: string): postgres.Sql {
       ? { rejectUnauthorized: false }
       : false,
   })
-  open.add(sql)
+  if (tracking) open.add(sql)
   return sql
 }
 
-// Ferme toutes les connexions ouvertes (tests, arrêt propre du serveur).
+// Ferme toutes les connexions suivies (voir trackOpenConnections).
 export async function closeSql(): Promise<void> {
   const toClose = [...open]
   open.clear()
