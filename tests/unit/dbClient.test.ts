@@ -62,7 +62,7 @@ describe('getStore', () => {
     const { getStore, SUPPORTED_SCHEMES } = await import(
       '../../src/db/store.js'
     )
-    for (const url of ['mysql://x/y', 'mongodb://x/y', 'nonsense']) {
+    for (const url of ['redis://x/y', 'cassandra://x/y', 'nonsense']) {
       await expect(getStore(url)).rejects.toThrow(/non prise en charge/)
     }
     expect(SUPPORTED_SCHEMES).toContain('postgres:')

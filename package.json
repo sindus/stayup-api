@@ -21,7 +21,9 @@
     "test:conformance": "vitest run tests/conformance"
   },
   "lint-staged": {
-    "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
+    "*.{ts,tsx,js}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -38,6 +40,8 @@
     "better-sqlite3": "^12.11.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.11",
+    "mongodb": "^7.6.0",
+    "mysql2": "^3.24.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",

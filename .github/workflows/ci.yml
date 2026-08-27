@@ -25,6 +25,30 @@ jobs:
         ports:
           - 5432:5432
 
+      # Un moteur SQL qui n'est pas Postgres, et un moteur NoSQL : la suite de
+      # conformité ne prouve quelque chose que si elle tourne sur les trois.
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -proot --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 3306:3306
+
+      mongodb:
+        image: mongo:7
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 27017:27017
+
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +77,8 @@ jobs:
       - name: Run adapter conformance suite
         run: npm run test:conformance
 
+      # Les fonctionnels couvrent l'API sur Postgres, et la conformité des
+      # adaptateurs MySQL et MongoDB sur de vrais serveurs.
       - name: Run functional tests
         run: npm run test:functional
         env:
@@ -61,6 +87,12 @@ jobs:
           DB_NAME: stayup_test
           DB_USER: postgres
           DB_PASSWORD: postgres
+          MYSQL_HOST: localhost
+          MYSQL_PORT: 3306
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root
+          MONGO_HOST: localhost
+          MONGO_PORT: 27017
 
   deploy:
     name: Deploy to Cloudflare Workers

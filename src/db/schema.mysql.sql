@@ -1,0 +1,106 @@
+-- Schéma MySQL / MariaDB — l'équivalent de schema.sql pour ces deux moteurs.
+--
+-- Les tables et colonnes portent exactement les mêmes noms que sous PostgreSQL :
+-- c'est ce qui permet à un provider d'être décrit une fois dans la documentation,
+-- quel que soit le moteur. Seuls les types changent, là où MySQL l'impose :
+--
+--   SERIAL       -> INT AUTO_INCREMENT
+--   JSONB        -> JSON (MariaDB en fait un LONGTEXT : l'adaptateur gère les deux)
+--   TIMESTAMPTZ  -> DATETIME(3), écrit en UTC
+--   BOOLEAN      -> TINYINT(1)
+--
+-- Les URL dépassent la longueur indexable d'un TEXT : elles sont en VARCHAR(512).
+
+-- ─── Cœur ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS repository (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  url        VARCHAR(512) NOT NULL UNIQUE,
+  type       VARCHAR(64) NOT NULL,
+  config     JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+-- ─── Registre des providers ───────────────────────────────────────────────────
+-- Chaque provider y déclare son nom affiché au démarrage. Son absence n'est pas
+-- une erreur : l'API retombe sur le nom du provider avec une majuscule.
+
+CREATE TABLE IF NOT EXISTS provider_registry (
+  name         VARCHAR(64) PRIMARY KEY,
+  display_name VARCHAR(255) NOT NULL,
+  sort_order   INT NOT NULL DEFAULT 100,
+  updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+-- ─── Comptes ──────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS `user` (
+  id             VARCHAR(64) PRIMARY KEY,
+  name           VARCHAR(255) NOT NULL,
+  email          VARCHAR(320) NOT NULL UNIQUE,
+  email_verified TINYINT(1) NOT NULL DEFAULT 0,
+  image          TEXT,
+  created_at     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+CREATE TABLE IF NOT EXISTS session (
+  id         VARCHAR(64) PRIMARY KEY,
+  expires_at DATETIME(3) NOT NULL,
+  token      VARCHAR(255) NOT NULL UNIQUE,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  ip_address VARCHAR(64),
+  user_agent TEXT,
+  user_id    VARCHAR(64) NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS account (
+  id                       VARCHAR(64) PRIMARY KEY,
+  account_id               VARCHAR(320) NOT NULL,
+  provider_id              VARCHAR(64) NOT NULL,
+  user_id                  VARCHAR(64) NOT NULL,
+  access_token             TEXT,
+  refresh_token            TEXT,
+  id_token                 TEXT,
+  access_token_expires_at  DATETIME(3),
+  refresh_token_expires_at DATETIME(3),
+  scope                    TEXT,
+  password                 TEXT,
+  created_at               DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at               DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS verification (
+  id         VARCHAR(64) PRIMARY KEY,
+  identifier VARCHAR(255) NOT NULL,
+  value      TEXT NOT NULL,
+  expires_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+-- ─── Abonnements ──────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS user_repository (
+  id            VARCHAR(64) PRIMARY KEY,
+  user_id       VARCHAR(64) NOT NULL,
+  repository_id INT NOT NULL,
+  created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uniq_user_repository (user_id, repository_id),
+  FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE,
+  FOREIGN KEY (repository_id) REFERENCES repository(id)
+);
+
+-- ─── Demandes de scraping ─────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS scrap_request (
+  id         VARCHAR(64) PRIMARY KEY,
+  user_id    VARCHAR(64) NOT NULL,
+  url        VARCHAR(512) NOT NULL,
+  status     VARCHAR(32) NOT NULL DEFAULT 'pending',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
+);

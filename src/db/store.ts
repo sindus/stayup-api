@@ -13,11 +13,51 @@ import { getSql } from './client.js'
 import type { DataStore } from './port.js'
 import { PostgresStore } from './postgres.js'
 
+/**
+ * Charge un pilote à l'exécution sans que l'empaqueteur Workers ne l'embarque.
+ *
+ * Un `import('mongodb')` littéral serait résolu à la compilation et le pilote
+ * entier finirait dans le bundle déployé sur Cloudflare, où il ne pourra jamais
+ * s'exécuter faute de socket TCP. Passer par une variable ne laisse rien à
+ * résoudre : sous Node, l'import fonctionne ; sous Workers, il n'est jamais atteint.
+ */
+function loadDriver(name: string): Promise<unknown> {
+  return import(name)
+}
+
+// Aliasés parce que `typeof import('…')` écrit en ligne se fait recouper par le
+// formateur, qui en sort une syntaxe invalide.
+type SqliteDriver = typeof import('better-sqlite3')
+type Mysql2Driver = typeof import('mysql2/promise')
+type MongoDriver = typeof import('mongodb')
+
 interface Adapter {
   schemes: string[]
   /** Le paquet npm à installer pour ce moteur, s'il n'est pas déjà là. */
   driver?: string
   create: (url: string) => Promise<DataStore>
+}
+
+/**
+ * Les moteurs qui ne tournent que sur Node gardent leur connexion.
+ *
+ * La règle d'isolation de Workers — interdisant de réutiliser une connexion
+ * ouverte par une autre requête, d'où la connexion par appel côté Postgres — ne
+ * s'applique qu'à Workers. MongoDB et MySQL y sont de toute façon inatteignables
+ * faute de socket TCP : rouvrir une connexion à chaque requête n'y protégerait
+ * de rien et coûterait une poignée d'allers-retours.
+ */
+const kept = new Map<string, Promise<DataStore>>()
+
+function keep(url: string, open: () => Promise<DataStore>): Promise<DataStore> {
+  const cached = kept.get(url)
+  if (cached) return cached
+
+  const store = open()
+  kept.set(url, store)
+  // Un échec ne doit pas rester en cache, sinon la base ne remonte jamais.
+  store.catch(() => kept.delete(url))
+  return store
 }
 
 const ADAPTERS: Adapter[] = [
@@ -30,7 +70,10 @@ const ADAPTERS: Adapter[] = [
     driver: 'better-sqlite3',
     create: async (url) => {
       const { SqliteStore } = await import('./sqlite.js')
-      const { default: Database } = await import('better-sqlite3')
+      // Module CommonJS : le constructeur arrive sous `default`.
+      const { default: Database } = (await loadDriver('better-sqlite3')) as {
+        default: SqliteDriver
+      }
       // sqlite:///chemin/vers/base.db — ou sqlite::memory:
       const path = url
         .replace(/^sqlite:(\/\/)?/, '')
@@ -43,6 +86,39 @@ const ADAPTERS: Adapter[] = [
         },
       })
     },
+  },
+  {
+    schemes: ['mysql:', 'mariadb:'],
+    driver: 'mysql2',
+    create: (url) =>
+      keep(url, async () => {
+        const { MysqlStore, mysqlClient } = await import('./mysql.js')
+        const mysql = (await loadDriver('mysql2/promise')) as Mysql2Driver
+        // Une seule connexion, pas un pool : les transactions n'ont de sens que
+        // si les requêtes qui les composent empruntent la même.
+        const conn = await mysql.createConnection({
+          uri: url.replace(/^mariadb:/, 'mysql:'),
+          dateStrings: true,
+        })
+        // Connexion perdue : on la sort du cache pour que la suivante rouvre.
+        conn.on('error', () => kept.delete(url))
+        return new MysqlStore(mysqlClient(conn))
+      }),
+  },
+  {
+    schemes: ['mongodb:', 'mongodb+srv:'],
+    driver: 'mongodb',
+    create: (url) =>
+      keep(url, async () => {
+        const { MongoStore, ensureIndexes } = await import('./mongo.js')
+        const { MongoClient } = (await loadDriver('mongodb')) as MongoDriver
+        const client = new MongoClient(url)
+        await client.connect()
+        // L'URL doit nommer la base : mongodb://hôte:27017/stayup
+        const db = client.db()
+        await ensureIndexes(db)
+        return new MongoStore(db)
+      }),
   },
 ]
 
