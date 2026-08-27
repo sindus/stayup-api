@@ -32,9 +32,9 @@ function schemaName(n: number): string {
   return `conformance_${n}`
 }
 
-// PostgresStore interroge information_schema sur 'public' : on y bascule le
-// search_path plutôt que de qualifier chaque requête, ce qui rendrait
-// l'adaptateur plus compliqué pour les seuls besoins du test.
+// Chaque cas tourne dans son propre schéma, hors de `public` : c'est ce qui
+// vérifie que la découverte suit `current_schema()` / le search_path, et non
+// un schéma écrit en dur.
 async function freshSchema(): Promise<string> {
   const name = schemaName(++counter)
   await sql.unsafe(`DROP SCHEMA IF EXISTS ${name} CASCADE`)
