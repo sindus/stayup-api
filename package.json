@@ -17,7 +17,8 @@
     "prepare": "husky",
     "create-user": "tsx scripts/create-user.ts",
     "dev:worker": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test:conformance": "vitest run tests/conformance"
   },
   "lint-staged": {
     "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
@@ -32,7 +33,9 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.10.2",
+    "better-sqlite3": "^12.11.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.11",
     "tsx": "^4.19.2",

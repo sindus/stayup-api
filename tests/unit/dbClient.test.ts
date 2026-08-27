@@ -43,13 +43,18 @@ describe('closeSql', () => {
 // support multi-base, et une URL non reconnue doit se voir refuser tout de suite
 // plutôt que d'échouer à la première requête.
 describe('getStore', () => {
+  it('accepts sqlite, which loads its driver on demand', async () => {
+    const { getStore } = await import('../../src/db/store.js')
+    expect(await getStore('sqlite::memory:')).toBeTruthy()
+  })
+
   it('accepts the postgres schemes', async () => {
     const { getStore } = await import('../../src/db/store.js')
     for (const url of [
       CONNECTION_STRING,
       CONNECTION_STRING.replace('postgres:', 'postgresql:'),
     ]) {
-      expect(getStore(url)).toBeTruthy()
+      expect(await getStore(url)).toBeTruthy()
     }
   })
 
@@ -57,13 +62,8 @@ describe('getStore', () => {
     const { getStore, SUPPORTED_SCHEMES } = await import(
       '../../src/db/store.js'
     )
-    for (const url of [
-      'mysql://x/y',
-      'mongodb://x/y',
-      'sqlite:///tmp/db',
-      'nonsense',
-    ]) {
-      expect(() => getStore(url)).toThrow(/non prise en charge/)
+    for (const url of ['mysql://x/y', 'mongodb://x/y', 'nonsense']) {
+      await expect(getStore(url)).rejects.toThrow(/non prise en charge/)
     }
     expect(SUPPORTED_SCHEMES).toContain('postgres:')
   })

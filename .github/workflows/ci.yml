@@ -48,6 +48,11 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+      # Chaque adaptateur doit satisfaire le même contrat, sinon « l'API s'adapte
+      # au type de base » n'est qu'une promesse. Celui-ci tourne sur un vrai SQLite.
+      - name: Run adapter conformance suite
+        run: npm run test:conformance
+
       - name: Run functional tests
         run: npm run test:functional
         env:

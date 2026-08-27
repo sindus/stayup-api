@@ -17,7 +17,7 @@ scrapRequestsUserRoute.post('/', async (c) => {
   if (!body.url?.trim()) return c.json({ error: 'url is required' }, 400)
 
   const url = body.url.trim()
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   const existing = await store.findPendingScrapRequest(userId, url)
   if (existing)
@@ -40,7 +40,9 @@ scrapRequestsAdminRoute.use('*', requireAdmin)
 
 // GET /ui/scrap-requests — list all requests with requester email
 scrapRequestsAdminRoute.get('/', async (c) => {
-  const requests = await getStore(c.env.DATABASE_URL).listScrapRequests()
+  const requests = await (
+    await getStore(c.env.DATABASE_URL)
+  ).listScrapRequests()
 
   return c.json({ requests })
 })
@@ -48,7 +50,7 @@ scrapRequestsAdminRoute.get('/', async (c) => {
 // POST /ui/scrap-requests/:id/approve — approve a request: create repo + auto-subscribe user
 scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
   const requestId = c.req.param('id')
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   const request = await store.getScrapRequest(requestId)
   if (!request) return c.json({ error: 'Request not found' }, 404)
@@ -95,7 +97,7 @@ scrapRequestsAdminRoute.post('/:id/approve', async (c) => {
 // POST /ui/scrap-requests/:id/reject — reject a pending request
 scrapRequestsAdminRoute.post('/:id/reject', async (c) => {
   const requestId = c.req.param('id')
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   const request = await store.getScrapRequest(requestId)
   if (!request) return c.json({ error: 'Request not found' }, 404)

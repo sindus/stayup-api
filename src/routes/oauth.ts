@@ -77,7 +77,7 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     name: string
   }
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const token = await findOrCreateOAuthUser(
     store,
     'google',
@@ -192,7 +192,7 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
       ''
   }
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const token = await findOrCreateOAuthUser(
     store,
     'github',

@@ -20,7 +20,7 @@ adminRepositoriesRoute.post('/', async (c) => {
     return c.json({ error: 'url and type are required' }, 400)
   }
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   // Création explicite par un admin : si l'URL existe déjà, on met à jour sa
   // config, mais jamais son type — le convertir romprait les abonnés existants.
@@ -48,9 +48,8 @@ adminRepositoriesRoute.post('/', async (c) => {
 
 // GET / — list all repositories with subscriber count
 adminRepositoriesRoute.get('/', async (c) => {
-  const rows = await getStore(
-    c.env.DATABASE_URL,
-  ).listSourcesWithSubscriberCount()
+  const store = await getStore(c.env.DATABASE_URL)
+  const rows = await store.listSourcesWithSubscriberCount()
   return c.json({ repositories: rows })
 })
 
@@ -60,7 +59,7 @@ adminRepositoriesRoute.delete('/:repoId/data', async (c) => {
   if (Number.isNaN(repoId))
     return c.json({ error: 'Repository not found' }, 404)
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   const repo = await store.getSource(repoId)
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
@@ -76,7 +75,7 @@ adminRepositoriesRoute.delete('/:repoId', async (c) => {
   if (Number.isNaN(repoId))
     return c.json({ error: 'Repository not found' }, 404)
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   const repo = await store.getSource(repoId)
   if (!repo) return c.json({ error: 'Repository not found' }, 404)

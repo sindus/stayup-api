@@ -11,7 +11,7 @@ scrapRoute.use('*', authMiddleware)
 scrapRoute.get('/', async (c) => {
   const payload = c.get('jwtPayload') as { sub?: string }
   const userId = payload?.sub ?? ''
-  const repos = await getStore(c.env.DATABASE_URL).listSourcesOfType(
+  const repos = await (await getStore(c.env.DATABASE_URL)).listSourcesOfType(
     'scrap',
     userId,
   )
@@ -28,7 +28,7 @@ scrapRoute.post('/:repoId/subscribe', async (c) => {
   if (Number.isNaN(repoId))
     return c.json({ error: 'Scrap feed not found' }, 404)
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const source = await store.getSource(repoId)
   if (!source || source.type !== 'scrap') {
     return c.json({ error: 'Scrap feed not found' }, 404)
@@ -49,7 +49,10 @@ scrapRoute.delete('/:repoId/subscribe', async (c) => {
   const repoId = Number.parseInt(c.req.param('repoId'), 10)
   if (Number.isNaN(repoId)) return c.json({ error: 'Not subscribed' }, 404)
 
-  const removed = await getStore(c.env.DATABASE_URL).unsubscribe(userId, repoId)
+  const removed = await (await getStore(c.env.DATABASE_URL)).unsubscribe(
+    userId,
+    repoId,
+  )
   if (!removed) return c.json({ error: 'Not subscribed' }, 404)
 
   return c.json({ success: true })

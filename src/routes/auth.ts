@@ -54,7 +54,7 @@ authRoute.post('/login', async (c) => {
     return c.json({ error: 'email and password are required' }, 400)
   }
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const account = await store.findCredentialByEmail(normalizeEmail(body.email))
 
   if (!account) {
@@ -110,7 +110,8 @@ authRoute.post('/register', async (c) => {
     return c.json({ error: 'name, email and password are required' }, 400)
   }
 
-  const created = await getStore(c.env.DATABASE_URL).createCredentialUser({
+  const store = await getStore(c.env.DATABASE_URL)
+  const created = await store.createCredentialUser({
     name: body.name,
     email: normalizeEmail(body.email),
     passwordHash: await hash(body.password, 10),

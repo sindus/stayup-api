@@ -56,7 +56,7 @@ async function getFeedForUser(
 
 // GET /ui/users — list all users
 uiUsersRoute.get('/', requireAdmin, async (c) => {
-  const users = await getStore(c.env.DATABASE_URL).listUsers()
+  const users = await (await getStore(c.env.DATABASE_URL)).listUsers()
   return c.json({ users })
 })
 
@@ -72,7 +72,8 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
     return c.json({ error: 'name, email and password are required' }, 400)
   }
 
-  const created = await getStore(c.env.DATABASE_URL).createCredentialUser({
+  const store = await getStore(c.env.DATABASE_URL)
+  const created = await store.createCredentialUser({
     name: body.name,
     email: normalizeEmail(body.email),
     passwordHash: await hash(body.password, 10),
@@ -91,7 +92,7 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
 // GET /ui/users/:userId — get user profile (self or admin)
 uiUsersRoute.get('/:userId', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const user = await getStore(c.env.DATABASE_URL).getUser(userId)
+  const user = await (await getStore(c.env.DATABASE_URL)).getUser(userId)
 
   if (!user) return c.json({ error: 'User not found' }, 404)
 
@@ -108,7 +109,7 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     currentPassword?: string
   }>()
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const isAdmin = (c.get('jwtPayload') as { role?: string })?.role === 'admin'
 
   // Contrôle en amont : un body ne contenant que `password` doit aussi 404
@@ -161,7 +162,7 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
 // DELETE /ui/users/:userId — delete a user
 uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const deleted = await getStore(c.env.DATABASE_URL).deleteUser(userId)
+  const deleted = await (await getStore(c.env.DATABASE_URL)).deleteUser(userId)
 
   if (!deleted) return c.json({ error: 'User not found' }, 404)
 
@@ -173,7 +174,7 @@ uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
 // GET /ui/users/:userId/feed
 uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const data = await getFeedForUser(getStore(c.env.DATABASE_URL), userId)
+  const data = await getFeedForUser(await getStore(c.env.DATABASE_URL), userId)
   return c.json(data)
 })
 
@@ -181,7 +182,7 @@ uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
 uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
   const connector = c.req.param('connector') as string
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   if (!(await store.providerExists(connector))) {
     return c.json({ error: 'Unknown connector' }, 404)
@@ -211,7 +212,7 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     return c.json({ error: 'Scrap feeds are managed by admins' }, 403)
   }
 
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   // `repository` est partagée par tous les abonnés d'une même URL. Un ON CONFLICT
   // qui écrase `type`/`config` laissait n'importe quel utilisateur convertir le
@@ -269,7 +270,7 @@ uiUsersRoute.delete(
   async (c) => {
     const userId = c.req.param('userId') as string
     const linkId = c.req.param('linkId') as string
-    const store = getStore(c.env.DATABASE_URL)
+    const store = await getStore(c.env.DATABASE_URL)
     const link = await store.findSubscription(linkId, userId)
 
     if (!link) return c.json({ error: 'Feed not found' }, 404)

@@ -12,7 +12,7 @@ connectorsRoute.use('/latest', requireAdmin)
 // GET /connectors/providers — liste légère des providers disponibles (nom + libellé),
 // pour construire une UI dynamique sans tirer toutes les données.
 connectorsRoute.get('/providers', async (c) => {
-  const providers = await listProviders(getStore(c.env.DATABASE_URL))
+  const providers = await listProviders(await getStore(c.env.DATABASE_URL))
   return c.json({
     providers: providers.map(({ name, displayName }) => ({
       name,
@@ -22,7 +22,7 @@ connectorsRoute.get('/providers', async (c) => {
 })
 
 connectorsRoute.get('/', async (c) => {
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const data: Record<string, unknown[]> = {}
   for (const name of await store.listProviderNames()) {
     data[name] = await store.allContent(name)
@@ -31,7 +31,7 @@ connectorsRoute.get('/', async (c) => {
 })
 
 connectorsRoute.get('/latest', async (c) => {
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
   const data: Record<string, unknown[]> = {}
   for (const name of await store.listProviderNames()) {
     data[name] = await store.latestPerSource(name)
@@ -41,7 +41,7 @@ connectorsRoute.get('/latest', async (c) => {
 
 connectorsRoute.get('/:name', async (c) => {
   const name = c.req.param('name')
-  const store = getStore(c.env.DATABASE_URL)
+  const store = await getStore(c.env.DATABASE_URL)
 
   if (!(await store.providerExists(name))) {
     return c.json({ error: `Connector '${name}' not found` }, 404)
