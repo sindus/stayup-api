@@ -16,6 +16,7 @@
     "format": "biome format --write .",
     "prepare": "husky",
     "create-user": "tsx scripts/create-user.ts",
+    "create-admin": "tsx scripts/create-admin.ts",
     "dev:worker": "wrangler dev",
     "deploy": "wrangler deploy",
     "test:conformance": "vitest run tests/conformance"

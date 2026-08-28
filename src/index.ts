@@ -37,8 +37,6 @@ serve(
         GOOGLE_CLIENT_SECRET,
         GITHUB_CLIENT_ID,
         GITHUB_CLIENT_SECRET,
-        API_USERNAME: process.env.API_USERNAME ?? 'admin',
-        API_PASSWORD: process.env.API_PASSWORD ?? 'changeme',
       }),
     port: Number(PORT),
   },

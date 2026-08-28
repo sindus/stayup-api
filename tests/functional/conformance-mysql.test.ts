@@ -100,9 +100,16 @@ runDataStoreConformance('MySQL', {
     if (!conn) throw new Error('connexion introuvable pour ce store')
     for (const e of entries) {
       await conn.query(
-        `INSERT INTO provider_registry (name, display_name, sort_order) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
-        [e.name, e.display_name, e.sort_order],
+        `INSERT INTO provider_registry (name, display_name, sort_order, template)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           display_name = VALUES(display_name), template = VALUES(template)`,
+        [
+          e.name,
+          e.display_name,
+          e.sort_order,
+          e.template == null ? null : JSON.stringify(e.template),
+        ],
       )
     }
   },

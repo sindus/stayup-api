@@ -27,7 +27,7 @@ git clone git@github.com:stayup-app/stayup-api.git
 cd stayup-api
 npm install
 
-cp .env.example .env          # set JWT_SECRET, API_USERNAME, API_PASSWORD
+cp .env.example .env          # set JWT_SECRET (and DATABASE_URL if not using DB_*)
 docker compose up -d db       # PostgreSQL on :5432
 
 npm run dev                   # API on http://localhost:3000
@@ -50,7 +50,6 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 | `DATABASE_URL` | built from `DB_*` | Connection string. Its scheme picks the engine — see [Databases](#databases) |
 | `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | `localhost` `5432` `stayup` `postgres` `postgres` | Alternative to `DATABASE_URL` |
 | `JWT_SECRET` | `changeme` | Token signing key — **change this in production** |
-| `API_USERNAME` `API_PASSWORD` | `admin` `changeme` | Admin service account credentials |
 | `PORT` | `3000` | Listening port |
 | `UI_URL` | `http://localhost:3001` | Redirect target after OAuth |
 | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | — | Google OAuth (optional) |
@@ -101,10 +100,10 @@ Every protected route expects an `Authorization: Bearer <jwt>` header. Tokens ar
 Two ways to get one:
 
 ```bash
-# Admin service account — credentials come from API_USERNAME / API_PASSWORD
+# Admin account — the `username` field carries the admin's e-mail
 curl -X POST localhost:3000/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"changeme"}'
+  -d '{"username":"root@example.com","password":"secret"}'
 
 # User account — email and password
 curl -X POST localhost:3000/auth/login \
@@ -112,9 +111,15 @@ curl -X POST localhost:3000/auth/login \
   -d '{"email":"alice@example.com","password":"secret"}'
 ```
 
-The role carried by the token (`admin` or `user`) drives access. Routes under `/ui/users/:userId` are open to that user as well as to admins; administration routes require the `admin` role.
+The role carried by the token (`admin` or `user`) drives access. Routes under `/ui/users/:userId` are open to that user as well as to admins; administration routes require the `admin` role, and managing other admins requires a super admin (`is_super`).
 
-Admin access is not stored in the database — it is the single service account defined by `API_USERNAME` and `API_PASSWORD`. Accounts created through registration, OAuth or `npm run create-user` always get the `user` role.
+Admins live in the `admin` table. Bootstrap the first (super) admin from the command line:
+
+```bash
+npm run create-admin root@example.com "Root" 's3cret'
+```
+
+Further admins are then created from `stayup-ui`'s admin area (super admin only). Accounts created through registration, OAuth or `npm run create-user` always get the `user` role.
 
 OAuth sign-up automatically links the account to an existing user when the email address matches. Callbacks accept a `redirect_uri` using the `stayup://` or `exp://` scheme for mobile deep links; any other scheme is ignored in favour of `UI_URL`.
 
@@ -149,7 +154,7 @@ opens the kind of connection PostgreSQL uses, so the other three need Docker or 
 The PostgreSQL schema is applied automatically when the container first starts and when
 functional tests run.
 
-Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables — or, under MongoDB, `connector_*` collections — and reads their display name from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list.
+Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables — or, under MongoDB, `connector_*` collections — and reads their display name, and an optional display **template** (`provider_registry.template`, a JSON manifest the apps render from — relayed untouched, never parsed here), from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider — and how it looks in the apps — is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list and `docs/display-templates.md` for the complete template reference.
 
 Authentication relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — these are managed by `stayup-ui`.
 

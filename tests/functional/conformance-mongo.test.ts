@@ -55,13 +55,17 @@ runDataStoreConformance('MongoDB', {
   async seedRegistry(store, entries) {
     const db = dbOf(store)
     for (const e of entries) {
-      await db
-        .collection('provider_registry')
-        .updateOne(
-          { _id: e.name as never },
-          { $set: { display_name: e.display_name, sort_order: e.sort_order } },
-          { upsert: true },
-        )
+      await db.collection('provider_registry').updateOne(
+        { _id: e.name as never },
+        {
+          $set: {
+            display_name: e.display_name,
+            sort_order: e.sort_order,
+            template: e.template ?? null,
+          },
+        },
+        { upsert: true },
+      )
     }
   },
 })

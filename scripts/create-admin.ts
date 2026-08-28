@@ -8,14 +8,14 @@ import { normalizeEmail } from '../src/db/users.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const [, , name, email, password] = process.argv
+const [, , email, name, password] = process.argv
 
-if (!name || !email || !password) {
-  console.error('Usage: tsx scripts/create-user.ts <name> <email> <password>')
+if (!email || !name || !password) {
+  console.error('Usage: tsx scripts/create-admin.ts <email> <name> <password>')
   console.error(
-    'Note: this creates an end-user account. To create an admin, use',
+    'Creates a SUPER admin (can manage other admins). Regular admins are',
   )
-  console.error('      scripts/create-admin.ts instead.')
+  console.error('created from the UI once a super admin exists.')
   process.exit(1)
 }
 
@@ -32,10 +32,11 @@ try {
   const schema = readFileSync(join(__dirname, '../src/db/schema.sql'), 'utf-8')
   await sql.unsafe(schema)
 
-  const created = await new PostgresStore(sql).createCredentialUser({
-    name,
+  const created = await new PostgresStore(sql).createAdmin({
     email: normalizeEmail(email),
+    name,
     passwordHash: await hash(password, 10),
+    isSuper: true,
   })
 
   if (!created) {
@@ -43,7 +44,7 @@ try {
     process.exit(1)
   }
 
-  console.log(`User "${name}" <${email}> created with id ${created.id}`)
+  console.log(`Super admin "${name}" <${email}> created with id ${created.id}`)
 } finally {
   await closeSql()
 }

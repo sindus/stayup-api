@@ -17,8 +17,6 @@ const FUNCTIONAL_ENV: Bindings = {
     process.env.DATABASE_URL ??
     `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup_test'}`,
   JWT_SECRET: 'test-secret',
-  API_USERNAME: 'testadmin',
-  API_PASSWORD: 'testpass',
   UI_URL: 'http://localhost:3001',
   GOOGLE_CLIENT_ID: '',
   GOOGLE_CLIENT_SECRET: '',
@@ -82,6 +80,14 @@ beforeAll(async () => {
      RETURNING id`,
   )) as { id: number }[]
   repoId = repo.id
+
+  // L'auth admin passe désormais par la table `admin` : on sème un super admin.
+  const { hash } = await import('bcryptjs')
+  await sql.unsafe(
+    `INSERT INTO admin (id, email, name, password_hash, is_super)
+     VALUES ('functional-admin', 'admin@functest.local', 'Root', '${await hash('testpass', 10)}', true)
+     ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_super = true`,
+  )
 })
 
 afterAll(async () => {
@@ -90,6 +96,7 @@ afterAll(async () => {
     DELETE FROM "user" WHERE id = '${testUserId}';
     DELETE FROM connector_changelog WHERE repository_id = ${repoId};
     DELETE FROM repository WHERE id = ${repoId};
+    DELETE FROM admin WHERE id = 'functional-admin';
   `)
   await closeSql()
 })
@@ -114,7 +121,10 @@ describe('POST /auth/login', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'testadmin', password: 'testpass' }),
+        body: JSON.stringify({
+          username: 'admin@functest.local',
+          password: 'testpass',
+        }),
       },
       FUNCTIONAL_ENV,
     )
@@ -129,7 +139,10 @@ describe('POST /auth/login', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'testadmin', password: 'wrong' }),
+        body: JSON.stringify({
+          username: 'admin@functest.local',
+          password: 'wrong',
+        }),
       },
       FUNCTIONAL_ENV,
     )
@@ -142,7 +155,10 @@ describe('POST /auth/login', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'testadmin', password: 'testpass' }),
+        body: JSON.stringify({
+          username: 'admin@functest.local',
+          password: 'testpass',
+        }),
       },
       FUNCTIONAL_ENV,
     )

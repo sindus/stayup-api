@@ -26,10 +26,15 @@ CREATE TABLE IF NOT EXISTS repository (
 -- une erreur : l'API retombe sur le nom du provider avec une majuscule.
 
 CREATE TABLE IF NOT EXISTS provider_registry (
-  name         TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  sort_order   INTEGER NOT NULL DEFAULT 100,
-  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  name          TEXT PRIMARY KEY,
+  display_name  TEXT NOT NULL,
+  sort_order    INTEGER NOT NULL DEFAULT 100,
+  -- Manifeste d'affichage déclaré par le provider, JSON en TEXT (voir
+  -- docs/self-hosting-and-providers.md). NULL = rendu générique côté apps.
+  template      TEXT,
+  -- 'auto' : ajout de flux immédiat ; 'manual' : demande à valider par un admin.
+  flux_approval TEXT NOT NULL DEFAULT 'auto',
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ─── Comptes ──────────────────────────────────────────────────────────────────
@@ -80,6 +85,19 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- ─── Admins ───────────────────────────────────────────────────────────────────
+-- Identités d'administration, distinctes des comptes utilisateurs. Le premier
+-- super admin est créé en ligne de commande ; les autres depuis l'interface.
+
+CREATE TABLE IF NOT EXISTS admin (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_super      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ─── Abonnements ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS user_repository (
@@ -90,11 +108,15 @@ CREATE TABLE IF NOT EXISTS user_repository (
   UNIQUE (user_id, repository_id)
 );
 
--- ─── Demandes de scraping ─────────────────────────────────────────────────────
+-- ─── Flux requests (file d'approbation) ──────────────────────────────────────
+-- Renommée depuis `scrap_request`. Sur une base SQLite existante, renommer
+-- manuellement : ALTER TABLE scrap_request RENAME TO flux_request;
+--                ALTER TABLE flux_request ADD COLUMN provider TEXT NOT NULL DEFAULT 'scrap';
 
-CREATE TABLE IF NOT EXISTS scrap_request (
+CREATE TABLE IF NOT EXISTS flux_request (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  provider   TEXT NOT NULL DEFAULT 'scrap',
   url        TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

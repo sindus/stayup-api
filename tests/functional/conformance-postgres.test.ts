@@ -77,9 +77,16 @@ runDataStoreConformance('PostgreSQL', {
     const scoped = (store as unknown as { sql: typeof sql }).sql
     for (const e of entries) {
       await scoped.unsafe(
-        `INSERT INTO provider_registry (name, display_name, sort_order) VALUES ($1, $2, $3)
-         ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name`,
-        [e.name, e.display_name, e.sort_order],
+        `INSERT INTO provider_registry (name, display_name, sort_order, template)
+         VALUES ($1, $2, $3, $4::jsonb)
+         ON CONFLICT (name) DO UPDATE SET
+           display_name = EXCLUDED.display_name, template = EXCLUDED.template`,
+        [
+          e.name,
+          e.display_name,
+          e.sort_order,
+          e.template == null ? null : JSON.stringify(e.template),
+        ],
       )
     }
   },

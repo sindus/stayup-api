@@ -35,6 +35,19 @@ export interface RegistryEntry {
   name: string
   display_name: string
   sort_order: number
+  /**
+   * Manifeste d'affichage que le provider déclare pour les apps (colonne
+   * `provider_registry.template`, JSON libre). Absent tant qu'aucun collecteur
+   * à jour n'a tourné ou que le provider n'en publie pas — les apps retombent
+   * alors sur leur rendu générique. L'API ne l'interprète pas, elle le relaie.
+   */
+  template?: unknown
+  /**
+   * Mode d'ajout d'un flux par un utilisateur : `auto` (le flux est créé
+   * immédiatement) ou `manual` (une demande est mise en file d'attente pour un
+   * admin). Absent → `auto` (colonne `flux_approval` pas encore présente).
+   */
+  flux_approval?: 'auto' | 'manual'
 }
 
 export interface SubscriptionRow {
@@ -53,10 +66,11 @@ export interface UserRow {
   created_at: string
 }
 
-export interface ScrapRequestRow {
+export interface FluxRequestRow {
   id: string
   user_id: string
   user_email?: string
+  provider: string
   url: string
   status: string
   created_at: string
@@ -66,6 +80,23 @@ export interface NewUser {
   name: string
   email: string
   passwordHash: string
+}
+
+/** Un administrateur. Identité distincte d'un utilisateur : pas de feed, pas
+ *  d'abonnement. `is_super` = habilité à gérer les autres admins. */
+export interface AdminRow {
+  id: string
+  email: string
+  name: string
+  is_super: boolean
+  created_at: string
+}
+
+export interface NewAdmin {
+  email: string
+  name: string
+  passwordHash: string
+  isSuper: boolean
 }
 
 // ─── Le contrat ──────────────────────────────────────────────────────────────
@@ -81,6 +112,8 @@ export interface DataStore {
   providerExists(name: string): Promise<boolean>
   /** Noms affichés déclarés par les providers. Absence tolérée : voir getProviders. */
   readRegistry(names: string[]): Promise<RegistryEntry[]>
+  /** Change le mode d'ajout de flux d'un provider (`auto` | `manual`). */
+  setProviderApproval(name: string, approval: 'auto' | 'manual'): Promise<void>
 
   // ── Contenu collecté ──────────────────────────────────────────────────────
 
@@ -155,6 +188,29 @@ export interface DataStore {
   updateCredentialPassword(userId: string, passwordHash: string): Promise<void>
   deleteUser(userId: string): Promise<boolean>
 
+  // ── Administrateurs ───────────────────────────────────────────────────────
+
+  /** Le compte admin correspondant à un e-mail (normalisé), hash inclus. */
+  findAdminByEmail(email: string): Promise<{
+    id: string
+    email: string
+    name: string
+    password_hash: string
+    is_super: boolean
+  } | null>
+  getAdmin(id: string): Promise<AdminRow | null>
+  listAdmins(): Promise<AdminRow[]>
+  /** Renvoie null si l'e-mail est déjà pris. */
+  createAdmin(admin: NewAdmin): Promise<{ id: string } | null>
+  /** Lève une erreur portant `code: '23505'` si l'e-mail est déjà pris. */
+  updateAdmin(
+    id: string,
+    patch: { name?: string; email?: string; passwordHash?: string },
+  ): Promise<void>
+  deleteAdmin(id: string): Promise<boolean>
+  /** Nombre de super admins — garde-fou avant d'en retirer un. */
+  countSuperAdmins(): Promise<number>
+
   findOAuthAccount(
     provider: string,
     accountId: string,
@@ -174,16 +230,25 @@ export interface DataStore {
     userId: string,
   ): Promise<{ name: string; email: string } | null>
 
-  // ── Demandes de scraping ──────────────────────────────────────────────────
+  // ── Demandes de flux (file d'approbation, tout provider `manual`) ─────────
 
-  findPendingScrapRequest(
+  findPendingFluxRequest(
     userId: string,
+    provider: string,
     url: string,
   ): Promise<{ id: string } | null>
-  createScrapRequest(userId: string, url: string): Promise<ScrapRequestRow>
-  listScrapRequests(): Promise<ScrapRequestRow[]>
-  getScrapRequest(
-    id: string,
-  ): Promise<{ id: string; user_id: string; status: string } | null>
-  setScrapRequestStatus(id: string, status: string): Promise<void>
+  createFluxRequest(
+    userId: string,
+    provider: string,
+    url: string,
+  ): Promise<FluxRequestRow>
+  listFluxRequests(): Promise<FluxRequestRow[]>
+  getFluxRequest(id: string): Promise<{
+    id: string
+    user_id: string
+    provider: string
+    url: string
+    status: string
+  } | null>
+  setFluxRequestStatus(id: string, status: string): Promise<void>
 }

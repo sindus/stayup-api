@@ -38,10 +38,16 @@ export interface ConformanceHarness {
       datetime?: string | null
     }[],
   ): Promise<void>
-  /** Déclare un nom affiché, comme le ferait un collecteur au démarrage. */
+  /** Déclare un nom affiché (et, si fourni, un manifeste d'affichage), comme le
+   *  ferait un collecteur au démarrage. */
   seedRegistry(
     store: DataStore,
-    entries: { name: string; display_name: string; sort_order: number }[],
+    entries: {
+      name: string
+      display_name: string
+      sort_order: number
+      template?: unknown
+    }[],
   ): Promise<void>
 }
 
@@ -80,8 +86,47 @@ export function runDataStoreConformance(
       ])
 
       expect(await store.readRegistry(['podcast'])).toEqual([
+        {
+          name: 'podcast',
+          display_name: 'Podcasts',
+          sort_order: 10,
+          flux_approval: 'auto',
+        },
+      ])
+    })
+
+    it("relaie tel quel le manifeste d'affichage déclaré par le provider", async () => {
+      const store = await harness.freshStore()
+      await harness.seedProvider(store, 'podcast', [])
+      const template = {
+        version: 1,
+        list: { layout: 'row', primary: 'title' },
+        detail: { mode: 'text' },
+      }
+      await harness.seedRegistry(store, [
+        { name: 'podcast', display_name: 'Podcasts', sort_order: 10, template },
+      ])
+
+      expect(await store.readRegistry(['podcast'])).toEqual([
+        {
+          name: 'podcast',
+          display_name: 'Podcasts',
+          sort_order: 10,
+          template,
+          flux_approval: 'auto',
+        },
+      ])
+    })
+
+    it('omet la clé template quand le provider n’en déclare pas', async () => {
+      const store = await harness.freshStore()
+      await harness.seedProvider(store, 'podcast', [])
+      await harness.seedRegistry(store, [
         { name: 'podcast', display_name: 'Podcasts', sort_order: 10 },
       ])
+
+      const [entry] = await store.readRegistry(['podcast'])
+      expect(entry).not.toHaveProperty('template')
     })
 
     // ── Contenu ────────────────────────────────────────────────────────────
@@ -467,38 +512,135 @@ export function runDataStoreConformance(
       })
     })
 
-    // ── Demandes de scraping ───────────────────────────────────────────────
+    // ── Réglage d'approbation d'un provider ────────────────────────────────
 
-    it('suit le cycle de vie d’une demande', async () => {
+    it('bascule le mode d’approbation d’un provider', async () => {
+      const store = await harness.freshStore()
+      await harness.seedProvider(store, 'rss', [])
+      await harness.seedRegistry(store, [
+        { name: 'rss', display_name: 'RSS', sort_order: 10 },
+      ])
+
+      expect((await store.readRegistry(['rss']))[0].flux_approval).toBe('auto')
+      await store.setProviderApproval('rss', 'manual')
+      expect((await store.readRegistry(['rss']))[0].flux_approval).toBe(
+        'manual',
+      )
+      await store.setProviderApproval('rss', 'auto')
+      expect((await store.readRegistry(['rss']))[0].flux_approval).toBe('auto')
+    })
+
+    // ── Demandes de flux (file d'approbation) ──────────────────────────────
+
+    it('suit le cycle de vie d’une demande de flux', async () => {
       const store = await harness.freshStore()
       const u = await newUser(store)
 
       expect(
-        await store.findPendingScrapRequest(u.id, 'https://n.dev'),
+        await store.findPendingFluxRequest(u.id, 'rss', 'https://n.dev'),
       ).toBeNull()
 
-      const created = await store.createScrapRequest(u.id, 'https://n.dev')
+      const created = await store.createFluxRequest(
+        u.id,
+        'rss',
+        'https://n.dev',
+      )
       expect(created.status).toBe('pending')
+      expect(created.provider).toBe('rss')
       expect(
-        await store.findPendingScrapRequest(u.id, 'https://n.dev'),
-      ).toMatchObject({
-        id: created.id,
-      })
+        await store.findPendingFluxRequest(u.id, 'rss', 'https://n.dev'),
+      ).toMatchObject({ id: created.id })
+      // La demande est portée par (user, provider, url) : un autre provider ne
+      // la retrouve pas.
+      expect(
+        await store.findPendingFluxRequest(u.id, 'scrap', 'https://n.dev'),
+      ).toBeNull()
 
-      const listed = await store.listScrapRequests()
+      const listed = await store.listFluxRequests()
       expect(listed[0]).toMatchObject({
         id: created.id,
+        provider: 'rss',
         user_email: 'ada@example.com',
       })
 
-      await store.setScrapRequestStatus(created.id, 'approved')
-      expect(await store.getScrapRequest(created.id)).toMatchObject({
+      await store.setFluxRequestStatus(created.id, 'approved')
+      expect(await store.getFluxRequest(created.id)).toMatchObject({
         status: 'approved',
+        provider: 'rss',
+        url: 'https://n.dev',
       })
-      // Approuvée, elle ne compte plus comme en attente.
       expect(
-        await store.findPendingScrapRequest(u.id, 'https://n.dev'),
+        await store.findPendingFluxRequest(u.id, 'rss', 'https://n.dev'),
       ).toBeNull()
+    })
+
+    // ── Administrateurs ────────────────────────────────────────────────────
+
+    it('gère le cycle de vie d’un administrateur', async () => {
+      const store = await harness.freshStore()
+
+      expect(await store.findAdminByEmail('root@stayup.test')).toBeNull()
+      expect(await store.countSuperAdmins()).toBe(0)
+
+      const created = await store.createAdmin({
+        email: 'root@stayup.test',
+        name: 'Root',
+        passwordHash: 'hash-root',
+        isSuper: true,
+      })
+      expect(created).not.toBeNull()
+      const rootId = (created as { id: string }).id
+
+      const ops = await store.createAdmin({
+        email: 'ops@stayup.test',
+        name: 'Ops',
+        passwordHash: 'hash-ops',
+        isSuper: false,
+      })
+      const opsId = (ops as { id: string }).id
+
+      // E-mail déjà pris → null. (Les appelants passent l'e-mail déjà
+      // normalisé en minuscules, comme pour les comptes utilisateurs.)
+      expect(
+        await store.createAdmin({
+          email: 'ops@stayup.test',
+          name: 'Dup',
+          passwordHash: 'x',
+          isSuper: false,
+        }),
+      ).toBeNull()
+
+      expect(await store.countSuperAdmins()).toBe(1)
+
+      const found = await store.findAdminByEmail('root@stayup.test')
+      expect(found).toMatchObject({
+        id: rootId,
+        is_super: true,
+        password_hash: 'hash-root',
+      })
+
+      expect((await store.listAdmins()).map((a) => a.email)).toEqual([
+        'ops@stayup.test',
+        'root@stayup.test',
+      ])
+
+      await store.updateAdmin(opsId, {
+        name: 'Ops 2',
+        passwordHash: 'hash-ops-2',
+      })
+      expect(await store.getAdmin(opsId)).toMatchObject({ name: 'Ops 2' })
+      expect(
+        (await store.findAdminByEmail('ops@stayup.test'))?.password_hash,
+      ).toBe('hash-ops-2')
+
+      // Renommer sur un e-mail déjà pris → erreur code '23505'.
+      await expect(
+        store.updateAdmin(opsId, { email: 'root@stayup.test' }),
+      ).rejects.toMatchObject({ code: '23505' })
+
+      expect(await store.deleteAdmin(opsId)).toBe(true)
+      expect(await store.deleteAdmin(opsId)).toBe(false)
+      expect(await store.getAdmin(opsId)).toBeNull()
     })
   })
 }

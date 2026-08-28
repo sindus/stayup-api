@@ -6,8 +6,6 @@ import type { Bindings } from '../src/types.js'
 export const TEST_ENV: Bindings = {
   DATABASE_URL: 'postgres://test',
   JWT_SECRET: 'test-secret',
-  API_USERNAME: 'testadmin',
-  API_PASSWORD: 'testpass',
   UI_URL: 'http://localhost:3001',
   GOOGLE_CLIENT_ID: 'google-client-id',
   GOOGLE_CLIENT_SECRET: 'google-client-secret',
@@ -18,12 +16,14 @@ export const TEST_ENV: Bindings = {
 export async function bearerToken(
   role: 'user' | 'admin' = 'user',
   username = role === 'admin' ? 'testadmin' : 'testuser',
+  isSuper = false,
 ): Promise<string> {
   return sign(
     {
       sub: '1',
       username,
       role,
+      ...(role === 'admin' ? { is_super: isSuper } : {}),
       exp: Math.floor(Date.now() / 1000) + 3600,
     },
     TEST_ENV.JWT_SECRET,
@@ -34,8 +34,11 @@ export async function bearerToken(
 export async function authHeaders(
   role: 'user' | 'admin' = 'user',
   username?: string,
+  isSuper?: boolean,
 ): Promise<Record<string, string>> {
-  return { Authorization: `Bearer ${await bearerToken(role, username)}` }
+  return {
+    Authorization: `Bearer ${await bearerToken(role, username, isSuper)}`,
+  }
 }
 
 // Corps de réponse de test : la forme varie d'un endpoint à l'autre.

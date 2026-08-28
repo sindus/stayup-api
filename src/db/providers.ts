@@ -11,6 +11,10 @@ import type { DataStore } from './port.js'
 export interface Provider {
   name: string
   displayName: string
+  /** Manifeste d'affichage relayé tel quel depuis `provider_registry.template`. */
+  template?: unknown
+  /** `auto` (ajout de flux immédiat) ou `manual` (demande à valider par un admin). */
+  flux_approval: 'auto' | 'manual'
 }
 
 function capitalize(name: string): string {
@@ -29,7 +33,15 @@ export async function listProviders(store: DataStore): Promise<Provider[]> {
       name,
       displayName: meta.get(name)?.display_name ?? capitalize(name),
       sortOrder: meta.get(name)?.sort_order ?? 999,
+      template: meta.get(name)?.template ?? null,
+      flux_approval: meta.get(name)?.flux_approval ?? 'auto',
     }))
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-    .map(({ name, displayName }) => ({ name, displayName }))
+    .map(({ name, displayName, template, flux_approval }) =>
+      // La clé `template` n'apparaît que si le provider en déclare un : les
+      // consommateurs (et les tests) qui l'ignorent voient la forme d'avant.
+      template == null
+        ? { name, displayName, flux_approval }
+        : { name, displayName, template, flux_approval },
+    )
 }

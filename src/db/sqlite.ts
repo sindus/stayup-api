@@ -14,11 +14,13 @@
  */
 
 import type {
+  AdminRow,
   ContentRow,
   DataStore,
+  FluxRequestRow,
+  NewAdmin,
   NewUser,
   RegistryEntry,
-  ScrapRequestRow,
   Source,
   SubscriptionRow,
   UserRow,
@@ -42,6 +44,29 @@ function parseConfig<T extends { config?: unknown }>(row: T): T {
     }
   }
   return { ...row, config: row.config ?? {} }
+}
+
+/**
+ * `template` est stocké en TEXT (JSON) comme `config` : on le rend en objet pour
+ * que la forme relayée par l'API soit la même quel que soit le moteur. Absent ou
+ * illisible → la clé disparaît (et non `template: null`), l'app retombe alors
+ * sur son rendu générique.
+ */
+function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
+  const base: RegistryEntry = {
+    name: row.name,
+    display_name: row.display_name,
+    sort_order: row.sort_order,
+    flux_approval: row.flux_approval === 'manual' ? 'manual' : 'auto',
+  }
+  if (row.template == null) return base
+  if (typeof row.template !== 'string')
+    return { ...base, template: row.template }
+  try {
+    return { ...base, template: JSON.parse(row.template) }
+  } catch {
+    return base
+  }
 }
 
 /** Marqueurs de paramètres pour une liste, SQLite n'ayant pas de type tableau. */
@@ -84,14 +109,26 @@ export class SqliteStore implements DataStore {
     if (names.length === 0) return []
     try {
       return this.all<RegistryEntry>(
-        `SELECT name, display_name, sort_order FROM provider_registry
+        `SELECT name, display_name, sort_order, template, flux_approval FROM provider_registry
          WHERE name IN (${placeholders(names.length)})`,
         names,
-      )
+      ).map(normalizeRegistryRow)
     } catch {
       // Table absente : registre vide, pas une erreur. Voir listProviders().
+      // `template` / `flux_approval` font partie du schéma SQLite dès sa
+      // création — pas de relecture partielle à prévoir ici.
       return []
     }
+  }
+
+  async setProviderApproval(
+    name: string,
+    approval: 'auto' | 'manual',
+  ): Promise<void> {
+    this.db.run(
+      'UPDATE provider_registry SET flux_approval = ? WHERE name = ?',
+      [approval, name],
+    )
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
@@ -487,51 +524,134 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Demandes de scraping ──────────────────────────────────────────────────
+  // ── Administrateurs ───────────────────────────────────────────────────────
 
-  async findPendingScrapRequest(userId: string, url: string) {
-    return this.one<{ id: string }>(
-      `SELECT id FROM scrap_request WHERE user_id = ? AND url = ? AND status = 'pending'`,
-      [userId, url],
+  async findAdminByEmail(email: string) {
+    const row = this.one<{
+      id: string
+      email: string
+      name: string
+      password_hash: string
+      is_super: number
+    }>(
+      'SELECT id, email, name, password_hash, is_super FROM admin WHERE lower(email) = ? LIMIT 1',
+      [email],
+    )
+    return row ? { ...row, is_super: Boolean(row.is_super) } : null
+  }
+
+  async getAdmin(id: string): Promise<AdminRow | null> {
+    const row = this.one<Omit<AdminRow, 'is_super'> & { is_super: number }>(
+      'SELECT id, email, name, is_super, created_at FROM admin WHERE id = ?',
+      [id],
+    )
+    return row ? { ...row, is_super: Boolean(row.is_super) } : null
+  }
+
+  async listAdmins(): Promise<AdminRow[]> {
+    return this.all<Omit<AdminRow, 'is_super'> & { is_super: number }>(
+      'SELECT id, email, name, is_super, created_at FROM admin ORDER BY email',
+    ).map((r) => ({ ...r, is_super: Boolean(r.is_super) }))
+  }
+
+  async createAdmin(admin: NewAdmin): Promise<{ id: string } | null> {
+    if (this.one('SELECT id FROM admin WHERE lower(email) = ?', [admin.email]))
+      return null
+    const id = crypto.randomUUID()
+    this.db.run(
+      'INSERT INTO admin (id, email, name, password_hash, is_super) VALUES (?, ?, ?, ?, ?)',
+      [id, admin.email, admin.name, admin.passwordHash, admin.isSuper ? 1 : 0],
+    )
+    return { id }
+  }
+
+  async updateAdmin(
+    id: string,
+    patch: { name?: string; email?: string; passwordHash?: string },
+  ): Promise<void> {
+    if (patch.email !== undefined) {
+      const taken = this.one<{ id: string }>(
+        'SELECT id FROM admin WHERE lower(email) = ? AND id <> ?',
+        [patch.email, id],
+      )
+      if (taken)
+        throw Object.assign(new Error('email already in use'), {
+          code: '23505',
+        })
+    }
+    this.db.run(
+      `UPDATE admin
+       SET name = COALESCE(?, name),
+           email = COALESCE(?, email),
+           password_hash = COALESCE(?, password_hash)
+       WHERE id = ?`,
+      [patch.name ?? null, patch.email ?? null, patch.passwordHash ?? null, id],
     )
   }
 
-  async createScrapRequest(
+  async deleteAdmin(id: string): Promise<boolean> {
+    if (!this.one('SELECT id FROM admin WHERE id = ?', [id])) return false
+    this.db.run('DELETE FROM admin WHERE id = ?', [id])
+    return true
+  }
+
+  async countSuperAdmins(): Promise<number> {
+    const row = this.one<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM admin WHERE is_super = 1',
+    )
+    return Number(row?.count ?? 0)
+  }
+
+  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+
+  async findPendingFluxRequest(userId: string, provider: string, url: string) {
+    return this.one<{ id: string }>(
+      `SELECT id FROM flux_request
+       WHERE user_id = ? AND provider = ? AND url = ? AND status = 'pending'`,
+      [userId, provider, url],
+    )
+  }
+
+  async createFluxRequest(
     userId: string,
+    provider: string,
     url: string,
-  ): Promise<ScrapRequestRow> {
+  ): Promise<FluxRequestRow> {
     const id = crypto.randomUUID()
     this.db.run(
-      'INSERT INTO scrap_request (id, user_id, url) VALUES (?, ?, ?)',
-      [id, userId, url],
+      'INSERT INTO flux_request (id, user_id, provider, url) VALUES (?, ?, ?, ?)',
+      [id, userId, provider, url],
     )
-    const row = this.one<ScrapRequestRow>(
-      'SELECT id, user_id, url, status, created_at FROM scrap_request WHERE id = ?',
+    const row = this.one<FluxRequestRow>(
+      'SELECT id, user_id, provider, url, status, created_at FROM flux_request WHERE id = ?',
       [id],
     )
-    if (!row) throw new Error('scrap_request introuvable après insertion')
+    if (!row) throw new Error('flux_request introuvable après insertion')
     return row
   }
 
-  async listScrapRequests(): Promise<ScrapRequestRow[]> {
-    return this.all<ScrapRequestRow>(
-      `SELECT sr.id, sr.user_id, u.email AS user_email, sr.url, sr.status, sr.created_at
-       FROM scrap_request sr JOIN "user" u ON u.id = sr.user_id
-       ORDER BY sr.created_at DESC`,
+  async listFluxRequests(): Promise<FluxRequestRow[]> {
+    return this.all<FluxRequestRow>(
+      `SELECT fr.id, fr.user_id, u.email AS user_email, fr.provider, fr.url, fr.status, fr.created_at
+       FROM flux_request fr JOIN "user" u ON u.id = fr.user_id
+       ORDER BY fr.created_at DESC`,
     )
   }
 
-  async getScrapRequest(id: string) {
-    return this.one<{ id: string; user_id: string; status: string }>(
-      'SELECT id, user_id, status FROM scrap_request WHERE id = ?',
+  async getFluxRequest(id: string) {
+    return this.one<{
+      id: string
+      user_id: string
+      provider: string
+      url: string
+      status: string
+    }>(
+      'SELECT id, user_id, provider, url, status FROM flux_request WHERE id = ?',
       [id],
     )
   }
 
-  async setScrapRequestStatus(id: string, status: string): Promise<void> {
-    this.db.run('UPDATE scrap_request SET status = ? WHERE id = ?', [
-      status,
-      id,
-    ])
+  async setFluxRequestStatus(id: string, status: string): Promise<void> {
+    this.db.run('UPDATE flux_request SET status = ? WHERE id = ?', [status, id])
   }
 }

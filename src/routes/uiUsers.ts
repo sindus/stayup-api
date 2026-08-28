@@ -208,9 +208,7 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   }
 
   const jwtPayload = c.get('jwtPayload') as { role?: string }
-  if (body.provider === 'scrap' && jwtPayload?.role !== 'admin') {
-    return c.json({ error: 'Scrap feeds are managed by admins' }, 403)
-  }
+  const isAdmin = jwtPayload?.role === 'admin'
 
   const store = await getStore(c.env.DATABASE_URL)
 
@@ -227,6 +225,32 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
       { error: 'This URL is already registered under another provider' },
       409,
     )
+  }
+
+  // Un flux inédit pour un provider en mode `manual` passe par la file
+  // d'approbation — sauf si c'est un admin qui agit, ou si le flux existe déjà
+  // (déjà vérifié : s'y abonner ne demande pas d'approbation).
+  if (!existing && !isAdmin) {
+    const [meta] = await store.readRegistry([body.provider])
+    if (meta?.flux_approval === 'manual') {
+      const pending = await store.findPendingFluxRequest(
+        userId,
+        body.provider,
+        body.url,
+      )
+      if (pending) {
+        return c.json(
+          { error: 'A pending request already exists for this flux' },
+          409,
+        )
+      }
+      const request = await store.createFluxRequest(
+        userId,
+        body.provider,
+        body.url,
+      )
+      return c.json({ status: 'pending', request }, 202)
+    }
   }
 
   const repo =
@@ -278,8 +302,13 @@ uiUsersRoute.delete(
     const payload = c.get('jwtPayload') as { role?: string }
     const isAdmin = payload?.role === 'admin'
 
-    // Scrap repos are admin-managed: never cascade-delete, just remove the subscription
-    if (link.type === 'scrap') {
+    // Les flux d'un provider en mode `manual` sont curés : ils ont d'autres
+    // abonnés et une gestion admin dédiée — ici on se contente de désabonner,
+    // jamais de purger la source (même pour un admin).
+    const [meta] = await store.readRegistry([link.type])
+    const curated = meta?.flux_approval === 'manual'
+
+    if (curated) {
       await store.unsubscribeById(linkId)
     } else if (isAdmin) {
       await purgeRepository(store, link.repository_id, link.type)

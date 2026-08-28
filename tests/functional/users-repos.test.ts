@@ -17,8 +17,6 @@ const FUNCTIONAL_ENV: Bindings = {
     process.env.DATABASE_URL ??
     `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup_test'}`,
   JWT_SECRET: 'test-secret',
-  API_USERNAME: 'testadmin',
-  API_PASSWORD: 'testpass',
   UI_URL: 'http://localhost:3001',
   GOOGLE_CLIENT_ID: '',
   GOOGLE_CLIENT_SECRET: '',

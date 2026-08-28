@@ -1,20 +1,35 @@
+import { hash } from 'bcryptjs'
 import { sign } from 'hono/jwt'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
 import { TEST_ENV, authHeaders, json, mockSql } from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() }))
 
-describe('POST /auth/login', () => {
-  it('returns token for valid credentials', async () => {
+describe('POST /auth/login (admin)', () => {
+  let adminHash: string
+  const adminRow = () => ({
+    id: 'adm-1',
+    email: 'root@stayup.test',
+    name: 'Root',
+    password_hash: adminHash,
+    is_super: true,
+  })
+
+  beforeAll(async () => {
+    adminHash = await hash('s3cret', 10)
+  })
+
+  it('returns a token for a matching admin account', async () => {
+    mockSql([[adminRow()]])
     const res = await app.request(
       '/auth/login',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: TEST_ENV.API_USERNAME,
-          password: TEST_ENV.API_PASSWORD,
+          username: 'root@stayup.test',
+          password: 's3cret',
         }),
       },
       TEST_ENV,
@@ -22,41 +37,45 @@ describe('POST /auth/login', () => {
 
     expect(res.status).toBe(200)
     const body = await json(res)
-    expect(body).toHaveProperty('token')
     expect(typeof body.token).toBe('string')
+    const claims = JSON.parse(
+      Buffer.from(body.token.split('.')[1], 'base64url').toString(),
+    )
+    expect(claims.role).toBe('admin')
+    expect(claims.is_super).toBe(true)
   })
 
-  it('returns 401 for wrong password', async () => {
+  it('returns 401 for a wrong password', async () => {
+    mockSql([[adminRow()]])
     const res = await app.request(
       '/auth/login',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: TEST_ENV.API_USERNAME,
+          username: 'root@stayup.test',
           password: 'wrong',
         }),
       },
       TEST_ENV,
     )
-
     expect(res.status).toBe(401)
   })
 
-  it('returns 401 for unknown username', async () => {
+  it('returns 401 for an unknown admin e-mail', async () => {
+    mockSql([[]])
     const res = await app.request(
       '/auth/login',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: 'unknown',
-          password: TEST_ENV.API_PASSWORD,
+          username: 'nobody@stayup.test',
+          password: 's3cret',
         }),
       },
       TEST_ENV,
     )
-
     expect(res.status).toBe(401)
   })
 })

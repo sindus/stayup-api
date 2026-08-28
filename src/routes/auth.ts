@@ -26,20 +26,22 @@ authRoute.post('/login', async (c) => {
     password: string
   }>()
 
-  // Admin login via env var credentials
+  // Connexion admin : `username` porte l'e-mail du compte admin (table `admin`),
+  // vérifié contre son hash. Plus de mot de passe en dur dans l'environnement.
   if (body.username) {
-    if (
-      body.username !== c.env.API_USERNAME ||
-      body.password !== c.env.API_PASSWORD
-    ) {
+    const store = await getStore(c.env.DATABASE_URL)
+    const admin = await store.findAdminByEmail(normalizeEmail(body.username))
+    if (!admin || !(await compare(body.password, admin.password_hash))) {
       return c.json({ error: 'Invalid credentials' }, 401)
     }
 
     const token = await sign(
       {
-        sub: 'api',
-        username: body.username,
+        sub: admin.id,
         role: 'admin',
+        is_super: admin.is_super,
+        name: admin.name,
+        email: admin.email,
         exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
       },
       c.env.JWT_SECRET,
@@ -87,12 +89,14 @@ authRoute.get('/me', authMiddleware, async (c) => {
   const payload = c.get('jwtPayload') as {
     sub?: string
     role?: string
+    is_super?: boolean
     name?: string
     email?: string
   }
   return c.json({
     userId: payload.sub ?? '',
     role: payload.role ?? 'user',
+    isSuper: payload.is_super === true,
     name: payload.name ?? '',
     email: payload.email ?? '',
   })

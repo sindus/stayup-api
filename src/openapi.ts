@@ -50,7 +50,20 @@ export const openApiSpec = {
           created_at: { type: 'string', format: 'date-time' },
         },
       },
-      ScrapFeed: {
+      Admin: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          email: { type: 'string', format: 'email' },
+          name: { type: 'string' },
+          is_super: {
+            type: 'boolean',
+            description: 'Peut gérer les autres administrateurs.',
+          },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      ProviderFlux: {
         type: 'object',
         properties: {
           id: { type: 'integer' },
@@ -63,10 +76,13 @@ export const openApiSpec = {
           },
         },
       },
-      ScrapRequest: {
+      FluxRequest: {
         type: 'object',
         properties: {
           id: { type: 'string', format: 'uuid' },
+          user_id: { type: 'string' },
+          user_email: { type: 'string', format: 'email' },
+          provider: { type: 'string' },
           url: { type: 'string' },
           status: {
             type: 'string',
@@ -226,7 +242,9 @@ export const openApiSpec = {
       post: {
         summary: 'Connexion — obtenir un token JWT',
         description:
-          'Authentification admin (username + password) ou utilisateur (email + password).',
+          'Authentification admin (username = e-mail du compte admin + password) ' +
+          'ou utilisateur (email + password). Les admins sont stockés en base ' +
+          '(table `admin`) ; le premier est créé via `npm run create-admin`.',
         tags: ['Authentification'],
         requestBody: {
           required: true,
@@ -239,7 +257,11 @@ export const openApiSpec = {
                     type: 'object',
                     required: ['username', 'password'],
                     properties: {
-                      username: { type: 'string', example: 'admin' },
+                      username: {
+                        type: 'string',
+                        format: 'email',
+                        example: 'root@example.com',
+                      },
                       password: { type: 'string', example: 'Azerty123!' },
                     },
                   },
@@ -297,6 +319,11 @@ export const openApiSpec = {
                   properties: {
                     userId: { type: 'string' },
                     role: { type: 'string', enum: ['user', 'admin'] },
+                    isSuper: {
+                      type: 'boolean',
+                      description:
+                        'Vrai pour un super admin (gère les autres admins).',
+                    },
                     name: { type: 'string' },
                     email: { type: 'string', format: 'email' },
                   },
@@ -358,6 +385,19 @@ export const openApiSpec = {
                         properties: {
                           name: { type: 'string', example: 'youtube' },
                           displayName: { type: 'string', example: 'YouTube' },
+                          fluxApproval: {
+                            type: 'string',
+                            enum: ['auto', 'manual'],
+                            description:
+                              "Mode d'ajout d'un flux par un utilisateur : `auto` (créé tout de suite) ou `manual` (demande à valider par un admin).",
+                          },
+                          template: {
+                            type: 'object',
+                            nullable: true,
+                            description:
+                              "Manifeste d'affichage que le provider déclare pour les apps (provider_registry.template). Relayé tel quel, non interprété par l'API ; absent si le provider n'en publie pas — les apps rendent alors en générique.",
+                            additionalProperties: true,
+                          },
                         },
                       },
                     },
@@ -500,6 +540,145 @@ export const openApiSpec = {
           401: { description: 'Non authentifié' },
           403: { description: 'Rôle admin requis' },
           409: { description: 'Email déjà utilisé' },
+        },
+      },
+    },
+    '/ui/admins': {
+      get: {
+        summary: 'Lister les administrateurs (super admin)',
+        tags: ['Admin — Administrateurs'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Liste des admins',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    admins: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/Admin' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          403: { description: 'Super admin requis' },
+        },
+      },
+      post: {
+        summary: 'Créer un administrateur normal (super admin)',
+        description:
+          'Crée un admin non-super. Les super admins ne se créent qu’en ligne de commande.',
+        tags: ['Admin — Administrateurs'],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['email', 'name', 'password'],
+                properties: {
+                  email: { type: 'string', format: 'email' },
+                  name: { type: 'string' },
+                  password: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: 'Admin créé' },
+          400: { description: 'Champs requis manquants' },
+          403: { description: 'Super admin requis' },
+          409: { description: 'Email déjà utilisé' },
+        },
+      },
+    },
+    '/ui/admins/me': {
+      patch: {
+        summary: 'Changer son propre mot de passe (admin)',
+        tags: ['Admin — Administrateurs'],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['currentPassword', 'password'],
+                properties: {
+                  currentPassword: { type: 'string' },
+                  password: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Mot de passe changé' },
+          400: { description: 'Champs requis manquants' },
+          401: { description: 'Mot de passe actuel incorrect' },
+        },
+      },
+    },
+    '/ui/admins/{id}': {
+      patch: {
+        summary: 'Modifier un administrateur (super admin)',
+        tags: ['Admin — Administrateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  email: { type: 'string', format: 'email' },
+                  password: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Admin modifié' },
+          403: { description: 'Super admin requis' },
+          404: { description: 'Admin introuvable' },
+          409: { description: 'Email déjà utilisé' },
+        },
+      },
+      delete: {
+        summary: 'Supprimer un administrateur (super admin)',
+        description:
+          'Un super admin ne se supprime pas depuis l’interface, ni soi-même.',
+        tags: ['Admin — Administrateurs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Admin supprimé' },
+          403: { description: 'Super admin requis, ou cible super admin' },
+          404: { description: 'Admin introuvable' },
+          409: { description: 'On ne peut pas se supprimer soi-même' },
         },
       },
     },
@@ -700,6 +879,8 @@ export const openApiSpec = {
     '/ui/users/{userId}/repositories': {
       post: {
         summary: 'Ajouter un flux à un utilisateur',
+        description:
+          "Si le provider est en mode `manual` et que l'appelant est un utilisateur (pas un admin) et que l'URL n'existe pas encore, renvoie **202** avec `{ status: 'pending', request }` : le flux passe par la file d'approbation admin au lieu d'être créé.",
         tags: ['UI — Utilisateurs'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -750,10 +931,25 @@ export const openApiSpec = {
               },
             },
           },
+          202: {
+            description:
+              'Provider `manual` : demande créée, en attente d’approbation admin',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'pending' },
+                    request: { $ref: '#/components/schemas/FluxRequest' },
+                  },
+                },
+              },
+            },
+          },
           400: { description: 'provider et url requis' },
           401: { description: 'Non authentifié' },
           403: { description: 'Accès refusé' },
-          409: { description: 'Déjà abonné à ce flux' },
+          409: { description: 'Déjà abonné, ou demande déjà en attente' },
         },
       },
     },
@@ -948,24 +1144,32 @@ export const openApiSpec = {
         },
       },
     },
-    '/scrap': {
+    '/providers/{provider}/fluxes': {
       get: {
-        summary: 'Lister les flux scrap avec le statut d’abonnement',
+        summary: 'Lister les flux existants d’un provider',
         description:
-          "Renvoie tous les repositories de type 'scrap' avec, pour chacun, l'état d'abonnement de l'utilisateur authentifié.",
-        tags: ['Scrap'],
+          "Renvoie toutes les sources de ce provider avec, pour chacune, l'état d'abonnement de l'utilisateur authentifié. Générique : vaut pour n'importe quel provider.",
+        tags: ['Flux'],
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'provider',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
         responses: {
           200: {
-            description: 'Liste des flux scrap',
+            description: 'Liste des flux',
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
                   properties: {
-                    repos: {
+                    fluxes: {
                       type: 'array',
-                      items: { $ref: '#/components/schemas/ScrapFeed' },
+                      items: { $ref: '#/components/schemas/ProviderFlux' },
                     },
                   },
                 },
@@ -976,132 +1180,84 @@ export const openApiSpec = {
         },
       },
     },
-    '/scrap/{repoId}/subscribe': {
+    '/providers/{provider}/fluxes/{id}/subscribe': {
       post: {
-        summary: 'S’abonner à un flux scrap',
-        tags: ['Scrap'],
+        summary: 'S’abonner à un flux existant',
+        tags: ['Flux'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
-            name: 'repoId',
+            name: 'provider',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'id',
             in: 'path',
             required: true,
             schema: { type: 'integer' },
           },
         ],
         responses: {
-          201: {
-            description: 'Abonnement créé',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { success: { type: 'boolean' } },
-                },
-              },
-            },
-          },
+          201: { description: 'Abonnement créé' },
           401: { description: 'Non authentifié' },
-          404: { description: 'Flux scrap introuvable' },
+          404: { description: 'Flux introuvable pour ce provider' },
           409: { description: 'Déjà abonné' },
         },
       },
       delete: {
-        summary: 'Se désabonner d’un flux scrap',
+        summary: 'Se désabonner d’un flux',
         description:
-          'Supprime uniquement l’abonnement. Le repository scrap est géré par les admins et n’est jamais supprimé ici.',
-        tags: ['Scrap'],
+          'Supprime uniquement l’abonnement — la source peut avoir d’autres abonnés.',
+        tags: ['Flux'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
-            name: 'repoId',
+            name: 'provider',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'id',
             in: 'path',
             required: true,
             schema: { type: 'integer' },
           },
         ],
         responses: {
-          200: {
-            description: 'Désabonnement effectué',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { success: { type: 'boolean' } },
-                },
-              },
-            },
-          },
+          200: { description: 'Désabonnement effectué' },
           401: { description: 'Non authentifié' },
           404: { description: 'Non abonné à ce flux' },
         },
       },
     },
-    '/scrap/requests': {
-      post: {
-        summary: 'Soumettre une URL à scraper',
-        description:
-          'Crée une demande en statut `pending`. Un admin doit ensuite l’approuver pour que le flux soit créé.',
-        tags: ['Scrap'],
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['url'],
-                properties: { url: { type: 'string' } },
-              },
-            },
-          },
-        },
-        responses: {
-          201: {
-            description: 'Demande créée',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/ScrapRequest' },
-              },
-            },
-          },
-          400: { description: 'url manquante' },
-          401: { description: 'Non authentifié' },
-          409: {
-            description: 'Une demande en attente existe déjà pour cette URL',
-          },
-        },
-      },
-    },
-    '/ui/scrap-requests': {
+    '/ui/providers': {
       get: {
-        summary: 'Lister toutes les demandes de scraping (admin)',
-        tags: ['Admin — Scrap'],
+        summary: 'Providers + leur mode d’approbation de flux (admin)',
+        tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Liste des demandes avec l’email du demandeur',
+            description: 'Liste des providers',
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
                   properties: {
-                    requests: {
+                    providers: {
                       type: 'array',
                       items: {
-                        allOf: [
-                          { $ref: '#/components/schemas/ScrapRequest' },
-                          {
-                            type: 'object',
-                            properties: {
-                              user_id: { type: 'string' },
-                              user_email: {
-                                type: 'string',
-                                format: 'email',
-                              },
-                            },
+                        type: 'object',
+                        properties: {
+                          name: { type: 'string' },
+                          displayName: { type: 'string' },
+                          flux_approval: {
+                            type: 'string',
+                            enum: ['auto', 'manual'],
                           },
-                        ],
+                        },
                       },
                     },
                   },
@@ -1109,17 +1265,80 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
           403: { description: 'Rôle admin requis' },
         },
       },
     },
-    '/ui/scrap-requests/{id}/approve': {
-      post: {
-        summary: 'Approuver une demande de scraping (admin)',
+    '/ui/providers/{name}': {
+      patch: {
+        summary: 'Changer le mode d’ajout de flux d’un provider (admin)',
+        tags: ['Admin — Providers'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['flux_approval'],
+                properties: {
+                  flux_approval: { type: 'string', enum: ['auto', 'manual'] },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Mode mis à jour' },
+          400: { description: "flux_approval doit être 'auto' ou 'manual'" },
+          403: { description: 'Rôle admin requis' },
+          404: { description: 'Provider introuvable' },
+        },
+      },
+    },
+    '/ui/flux-requests': {
+      get: {
+        summary: 'Lister toutes les demandes de flux (admin)',
         description:
-          'Crée (ou met à jour) le repository scrap, abonne automatiquement le demandeur et passe la demande en `approved`.',
-        tags: ['Admin — Scrap'],
+          'Demandes en attente d’approbation, tous providers en mode `manual` confondus.',
+        tags: ['Admin — Providers'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description:
+              'Liste des demandes avec provider et e-mail du demandeur',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    requests: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/FluxRequest' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          403: { description: 'Rôle admin requis' },
+        },
+      },
+    },
+    '/ui/flux-requests/{id}/approve': {
+      post: {
+        summary: 'Approuver une demande de flux (admin)',
+        description:
+          'Crée (ou réutilise) la source sous le provider de la demande, abonne le demandeur et passe la demande en `approved`. Body optionnel : `{ config }`.',
+        tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1129,21 +1348,6 @@ export const openApiSpec = {
             schema: { type: 'string', format: 'uuid' },
           },
         ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['url'],
-                properties: {
-                  url: { type: 'string' },
-                  config: { type: 'object' },
-                },
-              },
-            },
-          },
-        },
         responses: {
           200: {
             description: 'Demande approuvée',
@@ -1159,18 +1363,19 @@ export const openApiSpec = {
               },
             },
           },
-          400: { description: 'url manquante' },
-          401: { description: 'Non authentifié' },
           403: { description: 'Rôle admin requis' },
           404: { description: 'Demande introuvable' },
-          409: { description: 'Demande déjà approuvée' },
+          409: {
+            description:
+              'Demande déjà approuvée, ou URL déjà rattachée à un autre provider',
+          },
         },
       },
     },
-    '/ui/scrap-requests/{id}/reject': {
+    '/ui/flux-requests/{id}/reject': {
       post: {
-        summary: 'Rejeter une demande de scraping (admin)',
-        tags: ['Admin — Scrap'],
+        summary: 'Rejeter une demande de flux (admin)',
+        tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1181,18 +1386,7 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: {
-            description: 'Demande rejetée',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { success: { type: 'boolean' } },
-                },
-              },
-            },
-          },
-          401: { description: 'Non authentifié' },
+          200: { description: 'Demande rejetée' },
           403: { description: 'Rôle admin requis' },
           404: { description: 'Demande introuvable' },
           409: { description: 'Demande non en attente' },

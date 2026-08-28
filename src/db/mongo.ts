@@ -22,11 +22,13 @@
 
 import type { Collection, Db, Document } from 'mongodb'
 import type {
+  AdminRow,
   ContentRow,
   DataStore,
+  FluxRequestRow,
+  NewAdmin,
   NewUser,
   RegistryEntry,
-  ScrapRequestRow,
   Source,
   SubscriptionRow,
   UserRow,
@@ -86,7 +88,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
     .collection('user_repository')
     .createIndex({ user_id: 1, repository_id: 1 }, { unique: true })
   await db.collection('account').createIndex({ provider_id: 1, account_id: 1 })
-  await db.collection('scrap_request').createIndex({ user_id: 1, url: 1 })
+  await db.collection('admin').createIndex({ email: 1 }, { unique: true })
+  // Migration douce : renomme l'ancienne collection AVANT de toucher la nouvelle.
+  const names = (
+    await db.listCollections({}, { nameOnly: true }).toArray()
+  ).map((c) => c.name)
+  if (names.includes('scrap_request') && !names.includes('flux_request')) {
+    await db.collection('scrap_request').rename('flux_request')
+  }
+  await db
+    .collection('flux_request')
+    .createIndex({ user_id: 1, provider: 1, url: 1 })
 }
 
 export class MongoStore implements DataStore {
@@ -135,11 +147,27 @@ export class MongoStore implements DataStore {
     const rows = await this.col('provider_registry')
       .find({ _id: { $in: names } })
       .toArray()
-    return rows.map((r) => ({
-      name: String(r._id),
-      display_name: r.display_name as string,
-      sort_order: r.sort_order as number,
-    }))
+    return rows.map((r) => {
+      const entry: RegistryEntry = {
+        name: String(r._id),
+        display_name: r.display_name as string,
+        sort_order: r.sort_order as number,
+        flux_approval: r.flux_approval === 'manual' ? 'manual' : 'auto',
+      }
+      // `template` n'est relayé que si le provider en a déclaré un.
+      if (r.template != null) entry.template = r.template
+      return entry
+    })
+  }
+
+  async setProviderApproval(
+    name: string,
+    approval: 'auto' | 'manual',
+  ): Promise<void> {
+    await this.col('provider_registry').updateOne(
+      { _id: name },
+      { $set: { flux_approval: approval } },
+    )
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
@@ -584,7 +612,7 @@ export class MongoStore implements DataStore {
       this.col('account').deleteMany({ user_id: userId }),
       this.col('session').deleteMany({ user_id: userId }),
       this.col('user_repository').deleteMany({ user_id: userId }),
-      this.col('scrap_request').deleteMany({ user_id: userId }),
+      this.col('flux_request').deleteMany({ user_id: userId }),
     ])
     return true
   }
@@ -643,35 +671,121 @@ export class MongoStore implements DataStore {
       : null
   }
 
-  // ── Demandes de scraping ──────────────────────────────────────────────────
+  // ── Administrateurs ───────────────────────────────────────────────────────
 
-  async findPendingScrapRequest(userId: string, url: string) {
-    const row = await this.col('scrap_request').findOne({
+  async findAdminByEmail(email: string) {
+    const row = await this.col('admin').findOne(sameEmail(email))
+    return row
+      ? {
+          id: String(row._id),
+          email: row.email as string,
+          name: row.name as string,
+          password_hash: row.password_hash as string,
+          is_super: Boolean(row.is_super),
+        }
+      : null
+  }
+
+  async getAdmin(id: string): Promise<AdminRow | null> {
+    const row = await this.col('admin').findOne({ _id: id })
+    return row ? this.toAdmin(row) : null
+  }
+
+  async listAdmins(): Promise<AdminRow[]> {
+    const rows = await this.col('admin').find().sort({ email: 1 }).toArray()
+    return rows.map((r) => this.toAdmin(r))
+  }
+
+  private toAdmin(doc: Document): AdminRow {
+    return {
+      id: String(doc._id),
+      email: doc.email as string,
+      name: doc.name as string,
+      is_super: Boolean(doc.is_super),
+      created_at: doc.created_at as string,
+    }
+  }
+
+  async createAdmin(admin: NewAdmin): Promise<{ id: string } | null> {
+    const id = crypto.randomUUID()
+    try {
+      await this.col('admin').insertOne({
+        _id: id,
+        email: admin.email,
+        name: admin.name,
+        password_hash: admin.passwordHash,
+        is_super: admin.isSuper,
+        created_at: nowIso(),
+      } as Stored)
+    } catch (err) {
+      if ((err as { code?: number }).code === DUPLICATE_KEY) return null
+      throw err
+    }
+    return { id }
+  }
+
+  async updateAdmin(
+    id: string,
+    patch: { name?: string; email?: string; passwordHash?: string },
+  ): Promise<void> {
+    if (patch.email !== undefined) {
+      const taken = await this.col('admin').findOne({
+        $and: [sameEmail(patch.email), { _id: { $ne: id } }],
+      })
+      if (taken)
+        throw Object.assign(new Error('email already in use'), {
+          code: '23505',
+        })
+    }
+    const set: Document = {}
+    if (patch.name !== undefined) set.name = patch.name
+    if (patch.email !== undefined) set.email = patch.email
+    if (patch.passwordHash !== undefined) set.password_hash = patch.passwordHash
+    if (Object.keys(set).length > 0)
+      await this.col('admin').updateOne({ _id: id }, { $set: set })
+  }
+
+  async deleteAdmin(id: string): Promise<boolean> {
+    const res = await this.col('admin').deleteOne({ _id: id })
+    return res.deletedCount > 0
+  }
+
+  async countSuperAdmins(): Promise<number> {
+    return this.col('admin').countDocuments({ is_super: true })
+  }
+
+  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+
+  async findPendingFluxRequest(userId: string, provider: string, url: string) {
+    const row = await this.col('flux_request').findOne({
       user_id: userId,
+      provider,
       url,
       status: 'pending',
     })
     return row ? { id: String(row._id) } : null
   }
 
-  async createScrapRequest(
+  async createFluxRequest(
     userId: string,
+    provider: string,
     url: string,
-  ): Promise<ScrapRequestRow> {
+  ): Promise<FluxRequestRow> {
     const doc = {
       _id: crypto.randomUUID(),
       user_id: userId,
+      provider,
       url,
       status: 'pending',
       created_at: nowIso(),
     }
-    await this.col('scrap_request').insertOne(doc as Stored)
+    await this.col('flux_request').insertOne(doc as Stored)
     const { _id, ...rest } = doc
     return { id: _id, ...rest }
   }
 
-  async listScrapRequests(): Promise<ScrapRequestRow[]> {
-    const rows = await this.col('scrap_request')
+  async listFluxRequests(): Promise<FluxRequestRow[]> {
+    const rows = await this.col('flux_request')
       .aggregate([
         { $sort: { created_at: -1 } },
         {
@@ -689,24 +803,27 @@ export class MongoStore implements DataStore {
       id: String(r._id),
       user_id: r.user_id as string,
       user_email: r._user.email as string,
+      provider: (r.provider as string) ?? 'scrap',
       url: r.url as string,
       status: r.status as string,
       created_at: r.created_at as string,
     }))
   }
 
-  async getScrapRequest(id: string) {
-    const row = await this.col('scrap_request').findOne({ _id: id })
+  async getFluxRequest(id: string) {
+    const row = await this.col('flux_request').findOne({ _id: id })
     return row
       ? {
           id: String(row._id),
           user_id: row.user_id as string,
+          provider: (row.provider as string) ?? 'scrap',
+          url: row.url as string,
           status: row.status as string,
         }
       : null
   }
 
-  async setScrapRequestStatus(id: string, status: string): Promise<void> {
-    await this.col('scrap_request').updateOne({ _id: id }, { $set: { status } })
+  async setFluxRequestStatus(id: string, status: string): Promise<void> {
+    await this.col('flux_request').updateOne({ _id: id }, { $set: { status } })
   }
 }

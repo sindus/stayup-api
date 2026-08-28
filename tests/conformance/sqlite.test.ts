@@ -54,9 +54,15 @@ runDataStoreConformance('SQLite', {
     const db = (store as unknown as { db: SqliteClient }).db
     for (const e of entries) {
       db.run(
-        `INSERT INTO provider_registry (name, display_name, sort_order) VALUES (?, ?, ?)
-         ON CONFLICT (name) DO UPDATE SET display_name = excluded.display_name`,
-        [e.name, e.display_name, e.sort_order],
+        `INSERT INTO provider_registry (name, display_name, sort_order, template) VALUES (?, ?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET
+           display_name = excluded.display_name, template = excluded.template`,
+        [
+          e.name,
+          e.display_name,
+          e.sort_order,
+          e.template == null ? null : JSON.stringify(e.template),
+        ],
       )
     }
   },

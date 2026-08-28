@@ -38,8 +38,8 @@ describe('GET /connectors/providers', () => {
     expect(res.status).toBe(200)
     const body = await json(res)
     expect(body.providers).toEqual([
-      { name: 'youtube', displayName: 'YouTube' },
-      { name: 'changelog', displayName: 'Changelog' },
+      { name: 'youtube', displayName: 'YouTube', fluxApproval: 'auto' },
+      { name: 'changelog', displayName: 'Changelog', fluxApproval: 'auto' },
     ])
   })
 
@@ -63,8 +63,8 @@ describe('GET /connectors/providers', () => {
     )
     expect(res.status).toBe(200)
     expect((await json(res)).providers).toEqual([
-      { name: 'changelog', displayName: 'Changelog' },
-      { name: 'youtube', displayName: 'Youtube' },
+      { name: 'changelog', displayName: 'Changelog', fluxApproval: 'auto' },
+      { name: 'youtube', displayName: 'Youtube', fluxApproval: 'auto' },
     ])
   })
 
@@ -81,6 +81,49 @@ describe('GET /connectors/providers', () => {
     )
     expect(res.status).toBe(200)
     expect((await json(res)).providers).toEqual([])
+  })
+
+  it('relays the display template a provider declares, unchanged', async () => {
+    const template = {
+      version: 1,
+      display: { name: 'GitHub Trending', accent: '#f4b585' },
+      list: { layout: 'row', primary: 'title' },
+      detail: { mode: 'table', collection: 'repos' },
+    }
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([
+        { table_name: 'connector_github_trending' },
+        { table_name: 'connector_youtube' },
+      ]) // getConnectorTables
+      .mockResolvedValueOnce([
+        {
+          name: 'github_trending',
+          display_name: 'GitHub Trending',
+          sort_order: 50,
+          template,
+        },
+        // youtube : pas de template déclaré → clé absente de la réponse
+        { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
+      ]) // provider_registry
+    sql.unsafe = vi.fn()
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).providers).toEqual([
+      { name: 'youtube', displayName: 'YouTube', fluxApproval: 'auto' },
+      {
+        name: 'github_trending',
+        displayName: 'GitHub Trending',
+        fluxApproval: 'auto',
+        template,
+      },
+    ])
   })
 })
 

@@ -32,7 +32,6 @@ One consequence worth stating plainly: **there is no coordination between instan
 |---|---|---|
 | `DATABASE_URL` | yes | `postgres://user:pass@host:port/dbname`. (Node/Docker builds also accept `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` separately — see `src/index.ts`.) |
 | `JWT_SECRET` | yes | Random secret used to sign auth tokens. Generate one with `openssl rand -hex 32`. |
-| `API_USERNAME` / `API_PASSWORD` | yes | The single admin service account. There is no admin row in the database — whoever logs in with these credentials gets the `admin` role. Regular users register through `stayup-ui`/mobile/desktop instead. |
 | `UI_URL` | yes | Public URL of your `stayup-ui` deployment. Used as the OAuth redirect target. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables "Sign in with Google". Leave empty to disable. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | no | Enables "Sign in with GitHub". Leave empty to disable. |
@@ -44,7 +43,7 @@ Email/password auth always works regardless of the OAuth variables.
 ```bash
 git clone https://github.com/stayup-app/stayup-api.git
 cd stayup-api
-cp .env.example .env   # fill in JWT_SECRET, API_USERNAME, API_PASSWORD, UI_URL
+cp .env.example .env   # fill in JWT_SECRET and UI_URL
 docker compose up -d db api
 ```
 
@@ -56,8 +55,6 @@ docker compose up -d db api
 npm ci
 npx wrangler secret put DATABASE_URL
 npx wrangler secret put JWT_SECRET
-npx wrangler secret put API_USERNAME
-npx wrangler secret put API_PASSWORD
 # UI_URL and the OAuth vars can go in wrangler.toml as plain [vars], or as secrets too
 npm run deploy
 ```
@@ -69,7 +66,7 @@ Your Postgres instance needs to be reachable from Cloudflare's network (a manage
 ```bash
 npm ci
 npm run build
-DATABASE_URL=... JWT_SECRET=... API_USERNAME=... API_PASSWORD=... UI_URL=... npm start
+DATABASE_URL=... JWT_SECRET=... UI_URL=... npm start
 ```
 
 Or build the provided `Dockerfile` yourself if you'd rather run a container without Compose.
@@ -82,11 +79,32 @@ If you're not using Docker Compose's auto-init, apply it yourself once:
 psql "$DATABASE_URL" -f src/db/schema.sql
 ```
 
-It is 100% additive (`CREATE TABLE IF NOT EXISTS` only) — safe to re-run at any time, including against a database that already has data.
+It is additive and safe to re-run. On PostgreSQL it also carries two idempotent
+migrations for existing databases: `scrap_request` is renamed to `flux_request`
+(the approval queue now serves every provider, not just scraping), and
+`provider_registry` gains a `flux_approval` column (`auto` | `manual`, default
+`auto`; `scrap` is seeded to `manual` the first time the column is added).
 
-## Creating your first user
+> **MySQL / SQLite upgrades:** those schema files only define the new shape for
+> fresh installs. If you already run one, rename the table and add the column
+> manually — the exact statements are in `src/db/schema.mysql.sql` /
+> `src/db/schema.sqlite.sql` comments.
 
-Admin access is the `API_USERNAME`/`API_PASSWORD` pair above — nothing to create. For a regular user account (without going through `stayup-ui`'s sign-up form):
+> **Cloudflare Workers:** the schema is never applied there. Apply `schema.sql`
+> against your managed Postgres once before deploying this version, or the first
+> admin toggle of a provider's approval mode will self-heal the `flux_approval`
+> column but the `scrap_request` → `flux_request` rename must be done by hand.
+
+## Creating your first admin
+
+Admins live in the `admin` table. Bootstrap the first one (a *super* admin, the
+only kind the CLI creates — it can manage the others from `stayup-ui`):
+
+```bash
+npm run create-admin -- root@example.com "Root" yourpassword
+```
+
+For a regular user account (without going through `stayup-ui`'s sign-up form):
 
 ```bash
 npm run create-user -- "Your Name" you@example.com yourpassword
@@ -96,8 +114,9 @@ npm run create-user -- "Your Name" you@example.com yourpassword
 
 ```bash
 curl https://your-api.example.com/            # {"status":"ok"}
-curl -u "$API_USERNAME:$API_PASSWORD" -X POST https://your-api.example.com/auth/login \
-  -H 'Content-Type: application/json' -d "{\"username\":\"$API_USERNAME\",\"password\":\"$API_PASSWORD\"}"
+curl -X POST https://your-api.example.com/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"root@example.com","password":"yourpassword"}'
 ```
 
 At this point `GET /connectors/providers` will return `{"providers":[]}` — that's expected, you haven't run a provider against this database yet. See Part 2.
@@ -206,7 +225,28 @@ Support a `--add <url>` CLI flag that just upserts a `repository` row and exits 
 
 ## Content conventions and the generic-fallback caveat
 
-`content` can be plain text or a JSON string — your choice. The 4 existing providers use small JSON payloads for `youtube`/`rss` (`{"title", "link", ...}`) so the client apps can render a title, thumbnail, etc. **A brand-new provider has no client-side renderer for its JSON shape** — the 3 apps show it with a generic card (first ~80 characters of `content`, the date, your `display_name`). That's fully functional, just visually plain. If you want a rich render (thumbnails, embeds, structured fields) for your provider, that's a separate, optional follow-up: someone adds a dedicated renderer component in each of `stayup-ui`/`stayup-desktop`/`stayup-mobile` keyed off your provider name. Nothing about the backend contract requires this.
+`content` can be plain text or a JSON string — your choice. The 4 existing providers use small JSON payloads for `youtube`/`rss` (`{"title", "link", ...}`) so the client apps can render a title, thumbnail, etc. **A provider that ships no display template has no rich render** — the 3 apps show it with a generic card (first ~80 characters of `content`, the date, your `display_name`). That's fully functional, just visually plain.
+
+## Display templates — a rich render with no app code
+
+Instead of adding a renderer component to each of the 3 apps, a provider **declares how its rows should look** as JSON in `provider_registry.template`. The apps read it from `GET /connectors/providers` and render list entries and the reading pane from it directly. A new provider gets thumbnails, audio players, image galleries, tables, HTML bodies, "open" buttons — without a single line changed in `stayup-ui` / `stayup-desktop` / `stayup-mobile`.
+
+Upsert it in the same statement that registers your display name:
+
+```sql
+ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;
+
+INSERT INTO provider_registry (name, display_name, sort_order, template)
+VALUES ('<name>', '<Display Name>', <order>, '<template json>'::jsonb)
+ON CONFLICT (name) DO UPDATE SET
+  display_name = EXCLUDED.display_name,
+  template     = EXCLUDED.template,
+  updated_at   = NOW();
+```
+
+`stayup-api` relays the value untouched — it never parses or validates it. It is **optional**: omit it (or the whole column) and nothing breaks — the apps then show the **raw content** (first ~80 chars of `content` + date in the list; `content` verbatim as text in the reading pane).
+
+**The full authoring reference — every field, every mode (`text`, `html`, `media`, `audio`, `gallery`, `table`, `link-list`), the accessor mini-language, recipes and the web-vs-mobile differences — is in [`display-templates.md`](display-templates.md).** `stayup-cmd-github-trending/fetch_trending.py` is the worked reference (`mode: table`); the other four `stayup-cmd-*` collectors each ship one too.
 
 ## Running it on a schedule
 
@@ -215,7 +255,7 @@ Copy the pattern from any `stayup-cmd-*` repo: a `Dockerfile`, a `daily.yml` Git
 ## Checklist before you consider it done
 
 - [ ] `connector_<name>` created with at least `id`, `repository_id`, `content`, `executed_at`, `success`.
-- [ ] `provider_registry` row upserted on every run.
+- [ ] `provider_registry` row upserted on every run (with a `template` if you want a rich render — optional).
 - [ ] `repository` rows read with `WHERE type = '<name>'`.
 - [ ] Old entries pruned according to `config.retention_days` (or documented if you don't support retention).
 - [ ] Per-source errors logged to `log` instead of crashing the run.

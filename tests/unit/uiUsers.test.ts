@@ -337,6 +337,96 @@ describe('POST /ui/users/:userId/repositories', () => {
     )
     expect(res.status).toBe(409)
   })
+
+  it('creates the flux immediately for an `auto` provider', async () => {
+    mockSql([
+      [], // findSourceByUrl → none
+      [{ name: 'rss', flux_approval: 'auto' }], // readRegistry
+      [{ id: 12, url: 'https://blog.dev/feed', type: 'rss', config: {} }], // createSource
+      [{ id: 'link-9', repository_id: 12, created_at: 'now' }], // subscribe
+    ])
+    const res = await app.request(
+      '/ui/users/1/repositories',
+      {
+        method: 'POST',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'rss',
+          url: 'https://blog.dev/feed',
+          config: {},
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+    expect((await json(res)).repository.provider).toBe('rss')
+  })
+
+  it('queues a request (202) for a `manual` provider when a user adds an unknown flux', async () => {
+    mockSql([
+      [], // findSourceByUrl → none
+      [{ name: 'scrap', flux_approval: 'manual' }], // readRegistry
+      [], // findPendingFluxRequest → none
+      [
+        {
+          id: 'req-1',
+          user_id: '1',
+          provider: 'scrap',
+          url: 'https://new.dev',
+          status: 'pending',
+          created_at: 'now',
+        },
+      ], // createFluxRequest
+    ])
+    const res = await app.request(
+      '/ui/users/1/repositories',
+      {
+        method: 'POST',
+        headers: {
+          ...(await selfToken('1')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'scrap',
+          url: 'https://new.dev',
+          config: {},
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(202)
+    const body = await json(res)
+    expect(body.status).toBe('pending')
+    expect(body.request.provider).toBe('scrap')
+  })
+
+  it('lets an admin bypass approval on a `manual` provider', async () => {
+    mockSql([
+      [], // findSourceByUrl → none
+      [{ id: 20, url: 'https://x.dev', type: 'scrap', config: {} }], // createSource (no readRegistry: admin skips the check)
+      [{ id: 'link-a', repository_id: 20, created_at: 'now' }], // subscribe
+    ])
+    const res = await app.request(
+      '/ui/users/1/repositories',
+      {
+        method: 'POST',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'scrap',
+          url: 'https://x.dev',
+          config: {},
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+  })
 })
 
 describe('DELETE /ui/users/:userId', () => {
@@ -580,22 +670,27 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
     expect(res.status).toBe(404)
   })
 
-  it('only removes the subscription for a scrap feed, never the repository', async () => {
-    const sql = mockSql([[{ repository_id: 5, type: 'scrap' }], []])
+  it('only removes the subscription for a curated (manual) provider, never the repository', async () => {
+    const sql = mockSql([
+      [{ repository_id: 5, type: 'scrap' }], // SELECT link
+      [{ name: 'scrap', flux_approval: 'manual' }], // readRegistry
+      [], // DELETE user_repository
+    ])
     const res = await app.request(
       '/ui/users/1/repositories/link-1',
       { method: 'DELETE', headers: await authHeaders('admin') },
       TEST_ENV,
     )
     expect(res.status).toBe(200)
-    // SELECT + DELETE user_repository, et rien d'autre
-    expect(sql).toHaveBeenCalledTimes(2)
+    // SELECT link + readRegistry + DELETE user_repository, et rien d'autre
+    expect(sql).toHaveBeenCalledTimes(3)
     expect(sql.unsafe).not.toHaveBeenCalled()
   })
 
-  it('purges the repository for an admin on a non-scrap feed', async () => {
+  it('purges the repository for an admin on an auto provider', async () => {
     const sql = mockSql([
       [{ repository_id: 5, type: 'rss' }], // SELECT link
+      [], // readRegistry → rss absent → auto
       [{ table_name: 'connector_rss' }], // getTableForProvider
       [], // sql.unsafe : DELETE connector_rss
       [], // DELETE user_repository
@@ -613,6 +708,7 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
   it('purges the repository when the last subscriber leaves', async () => {
     const sql = mockSql([
       [{ repository_id: 5, type: 'rss' }], // SELECT link
+      [], // readRegistry → auto
       [], // DELETE user_repository
       [{ count: '0' }], // plus aucun abonné
       [{ table_name: 'connector_rss' }], // getTableForProvider
@@ -632,6 +728,7 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
   it('keeps the repository when other subscribers remain', async () => {
     const sql = mockSql([
       [{ repository_id: 5, type: 'rss' }], // SELECT link
+      [], // readRegistry → auto
       [], // DELETE user_repository
       [{ count: '2' }], // il reste des abonnés
     ])
@@ -642,6 +739,6 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
     )
     expect(res.status).toBe(200)
     expect(sql.unsafe).not.toHaveBeenCalled()
-    expect(sql).toHaveBeenCalledTimes(3)
+    expect(sql).toHaveBeenCalledTimes(4)
   })
 })

@@ -15,6 +15,16 @@ export const requireAdmin = async (c: Context, next: Next) => {
   await next()
 }
 
+/** Réservé au super admin : la gestion des autres admins. Un admin « normal »
+ *  (créé depuis l'interface) fait l'opérationnel mais pas ça. */
+export const requireSuperAdmin = async (c: Context, next: Next) => {
+  const payload = c.get('jwtPayload') as { role?: string; is_super?: boolean }
+  if (payload?.role !== 'admin' || payload?.is_super !== true) {
+    return c.json({ error: 'Forbidden' }, 403)
+  }
+  await next()
+}
+
 export const requireSelfOrAdmin = async (c: Context, next: Next) => {
   const payload = c.get('jwtPayload') as { sub?: string; role?: string }
   if (payload?.role === 'admin') {

@@ -9,14 +9,21 @@ export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
 
-// GET /connectors/providers — liste légère des providers disponibles (nom + libellé),
-// pour construire une UI dynamique sans tirer toutes les données.
+// GET /connectors/providers — liste légère des providers disponibles (nom +
+// libellé + mode d'approbation), pour construire une UI dynamique sans tirer
+// toutes les données.
 connectorsRoute.get('/providers', async (c) => {
   const providers = await listProviders(await getStore(c.env.DATABASE_URL))
   return c.json({
-    providers: providers.map(({ name, displayName }) => ({
-      name,
-      displayName,
+    // `template` (manifeste d'affichage déclaré par le provider) n'est présent
+    // que pour ceux qui en publient un ; les apps retombent sinon sur leur
+    // rendu générique. L'API ne l'interprète pas. `fluxApproval` dit à l'app si
+    // l'ajout d'un flux est immédiat (`auto`) ou passe par une demande (`manual`).
+    providers: providers.map((p) => ({
+      name: p.name,
+      displayName: p.displayName,
+      fluxApproval: p.flux_approval,
+      ...(p.template == null ? {} : { template: p.template }),
     })),
   })
 })

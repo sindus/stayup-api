@@ -8,11 +8,13 @@
 
 import type postgres from 'postgres'
 import type {
+  AdminRow,
   ContentRow,
   DataStore,
+  FluxRequestRow,
+  NewAdmin,
   NewUser,
   RegistryEntry,
-  ScrapRequestRow,
   Source,
   SubscriptionRow,
   UserRow,
@@ -35,6 +37,30 @@ function repairConfig<T extends { config?: unknown }>(row: T): T {
     return { ...row, config: JSON.parse(row.config) }
   } catch {
     return row
+  }
+}
+
+/**
+ * Le `template` d'un provider n'est relayé que s'il en a déclaré un : une ligne
+ * sans manifeste ressort sans la clé (et non `template: null`), pour que la
+ * forme soit identique à celle d'avant la colonne. Une chaîne double-sérialisée
+ * (même travers que `config`) est réparée au passage. `flux_approval` est
+ * toujours présent, `auto` par défaut.
+ */
+function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
+  const base: RegistryEntry = {
+    name: row.name,
+    display_name: row.display_name,
+    sort_order: row.sort_order,
+    flux_approval: row.flux_approval === 'manual' ? 'manual' : 'auto',
+  }
+  if (row.template == null) return base
+  if (typeof row.template !== 'string')
+    return { ...base, template: row.template }
+  try {
+    return { ...base, template: JSON.parse(row.template) }
+  } catch {
+    return base
   }
 }
 
@@ -72,11 +98,45 @@ export class PostgresStore implements DataStore {
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
     // `provider_registry` n'appartient pas à l'API : c'est le premier collecteur
     // démarré qui la crée. Son absence n'est pas une erreur, juste un registre vide.
-    return this.sql<RegistryEntry[]>`
-      SELECT name, display_name, sort_order
-      FROM provider_registry
-      WHERE name = ANY(${names})
-    `.catch(() => [])
+    try {
+      return (
+        await this.sql<RegistryEntry[]>`
+          SELECT name, display_name, sort_order, template, flux_approval
+          FROM provider_registry
+          WHERE name = ANY(${names})
+        `
+      ).map(normalizeRegistryRow)
+    } catch (err) {
+      // `42703` = colonne absente : registre antérieur à `template` /
+      // `flux_approval`, qu'aucune migration n'a encore retouché. On relit avec
+      // le sous-ensemble minimal plutôt que de perdre les noms affichés.
+      if ((err as { code?: string }).code === '42703') {
+        return this.sql<RegistryEntry[]>`
+          SELECT name, display_name, sort_order
+          FROM provider_registry
+          WHERE name = ANY(${names})
+        `
+          .then((rows) => rows.map(normalizeRegistryRow))
+          .catch(() => [])
+      }
+      return []
+    }
+  }
+
+  async setProviderApproval(
+    name: string,
+    approval: 'auto' | 'manual',
+  ): Promise<void> {
+    // Auto-cicatrisation : la colonne peut manquer sur un déploiement Workers
+    // où le schéma SQL n'est jamais appliqué. Le premier réglage admin la crée.
+    await this.sql
+      .unsafe(
+        `ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS flux_approval TEXT NOT NULL DEFAULT 'auto'`,
+      )
+      .catch(() => {})
+    await this.sql`
+      UPDATE provider_registry SET flux_approval = ${approval} WHERE name = ${name}
+    `
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
@@ -478,47 +538,130 @@ export class PostgresStore implements DataStore {
     return row ?? null
   }
 
-  // ── Demandes de scraping ──────────────────────────────────────────────────
+  // ── Administrateurs ───────────────────────────────────────────────────────
 
-  async findPendingScrapRequest(userId: string, url: string) {
-    const [row] = await this.sql<{ id: string }[]>`
-      SELECT id FROM scrap_request
-      WHERE user_id = ${userId} AND url = ${url} AND status = 'pending'
+  async findAdminByEmail(email: string) {
+    const [row] = await this.sql<
+      {
+        id: string
+        email: string
+        name: string
+        password_hash: string
+        is_super: boolean
+      }[]
+    >`
+      SELECT id, email, name, password_hash, is_super
+      FROM admin WHERE LOWER(email) = ${email} LIMIT 1
     `
     return row ?? null
   }
 
-  async createScrapRequest(
+  async getAdmin(id: string): Promise<AdminRow | null> {
+    const [row] = await this.sql<AdminRow[]>`
+      SELECT id, email, name, is_super, created_at FROM admin WHERE id = ${id}
+    `
+    return row ?? null
+  }
+
+  async listAdmins(): Promise<AdminRow[]> {
+    return this.sql<AdminRow[]>`
+      SELECT id, email, name, is_super, created_at FROM admin ORDER BY email
+    `
+  }
+
+  async createAdmin(admin: NewAdmin): Promise<{ id: string } | null> {
+    const id = crypto.randomUUID()
+    try {
+      await this.sql`
+        INSERT INTO admin (id, email, name, password_hash, is_super)
+        VALUES (${id}, ${admin.email}, ${admin.name}, ${admin.passwordHash}, ${admin.isSuper})
+      `
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') return null
+      throw err
+    }
+    return { id }
+  }
+
+  async updateAdmin(
+    id: string,
+    patch: { name?: string; email?: string; passwordHash?: string },
+  ): Promise<void> {
+    const name = patch.name ?? null
+    const email = patch.email ?? null
+    const passwordHash = patch.passwordHash ?? null
+    await this.sql`
+      UPDATE admin
+      SET name = COALESCE(${name}, name),
+          email = COALESCE(${email}, email),
+          password_hash = COALESCE(${passwordHash}, password_hash)
+      WHERE id = ${id}
+    `
+  }
+
+  async deleteAdmin(id: string): Promise<boolean> {
+    const rows = await this.sql<{ id: string }[]>`
+      DELETE FROM admin WHERE id = ${id} RETURNING id
+    `
+    return rows.length > 0
+  }
+
+  async countSuperAdmins(): Promise<number> {
+    const [row] = await this.sql<{ count: string }[]>`
+      SELECT COUNT(*) AS count FROM admin WHERE is_super = true
+    `
+    return Number.parseInt(row.count, 10)
+  }
+
+  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+
+  async findPendingFluxRequest(userId: string, provider: string, url: string) {
+    const [row] = await this.sql<{ id: string }[]>`
+      SELECT id FROM flux_request
+      WHERE user_id = ${userId} AND provider = ${provider}
+        AND url = ${url} AND status = 'pending'
+    `
+    return row ?? null
+  }
+
+  async createFluxRequest(
     userId: string,
+    provider: string,
     url: string,
-  ): Promise<ScrapRequestRow> {
-    const [row] = await this.sql<ScrapRequestRow[]>`
-      INSERT INTO scrap_request (id, user_id, url)
-      VALUES (${crypto.randomUUID()}, ${userId}, ${url})
-      RETURNING id, user_id, url, status, created_at
+  ): Promise<FluxRequestRow> {
+    const [row] = await this.sql<FluxRequestRow[]>`
+      INSERT INTO flux_request (id, user_id, provider, url)
+      VALUES (${crypto.randomUUID()}, ${userId}, ${provider}, ${url})
+      RETURNING id, user_id, provider, url, status, created_at
     `
     return row
   }
 
-  async listScrapRequests(): Promise<ScrapRequestRow[]> {
-    return this.sql<ScrapRequestRow[]>`
-      SELECT sr.id, sr.user_id, u.email AS user_email, sr.url, sr.status, sr.created_at
-      FROM scrap_request sr
-      JOIN "user" u ON u.id = sr.user_id
-      ORDER BY sr.created_at DESC
+  async listFluxRequests(): Promise<FluxRequestRow[]> {
+    return this.sql<FluxRequestRow[]>`
+      SELECT fr.id, fr.user_id, u.email AS user_email, fr.provider, fr.url, fr.status, fr.created_at
+      FROM flux_request fr
+      JOIN "user" u ON u.id = fr.user_id
+      ORDER BY fr.created_at DESC
     `
   }
 
-  async getScrapRequest(id: string) {
+  async getFluxRequest(id: string) {
     const [row] = await this.sql<
-      { id: string; user_id: string; status: string }[]
+      {
+        id: string
+        user_id: string
+        provider: string
+        url: string
+        status: string
+      }[]
     >`
-      SELECT id, user_id, status FROM scrap_request WHERE id = ${id}
+      SELECT id, user_id, provider, url, status FROM flux_request WHERE id = ${id}
     `
     return row ?? null
   }
 
-  async setScrapRequestStatus(id: string, status: string): Promise<void> {
-    await this.sql`UPDATE scrap_request SET status = ${status} WHERE id = ${id}`
+  async setFluxRequestStatus(id: string, status: string): Promise<void> {
+    await this.sql`UPDATE flux_request SET status = ${status} WHERE id = ${id}`
   }
 }

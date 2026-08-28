@@ -26,10 +26,15 @@ CREATE TABLE IF NOT EXISTS repository (
 -- une erreur : l'API retombe sur le nom du provider avec une majuscule.
 
 CREATE TABLE IF NOT EXISTS provider_registry (
-  name         VARCHAR(64) PRIMARY KEY,
-  display_name VARCHAR(255) NOT NULL,
-  sort_order   INT NOT NULL DEFAULT 100,
-  updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+  name          VARCHAR(64) PRIMARY KEY,
+  display_name  VARCHAR(255) NOT NULL,
+  sort_order    INT NOT NULL DEFAULT 100,
+  -- Manifeste d'affichage déclaré par le provider (voir
+  -- docs/self-hosting-and-providers.md). NULL = rendu générique côté apps.
+  template      JSON,
+  -- 'auto' : ajout de flux immédiat ; 'manual' : demande à valider par un admin.
+  flux_approval VARCHAR(16) NOT NULL DEFAULT 'auto',
+  updated_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 );
 
 -- ─── Comptes ──────────────────────────────────────────────────────────────────
@@ -82,6 +87,19 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
 );
 
+-- ─── Admins ───────────────────────────────────────────────────────────────────
+-- Identités d'administration, distinctes des comptes utilisateurs. Le premier
+-- super admin est créé en ligne de commande ; les autres depuis l'interface.
+
+CREATE TABLE IF NOT EXISTS admin (
+  id            VARCHAR(64) PRIMARY KEY,
+  email         VARCHAR(320) NOT NULL UNIQUE,
+  name          VARCHAR(255) NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_super      TINYINT(1) NOT NULL DEFAULT 0,
+  created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
 -- ─── Abonnements ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS user_repository (
@@ -94,11 +112,15 @@ CREATE TABLE IF NOT EXISTS user_repository (
   FOREIGN KEY (repository_id) REFERENCES repository(id)
 );
 
--- ─── Demandes de scraping ─────────────────────────────────────────────────────
+-- ─── Flux requests (file d'approbation) ──────────────────────────────────────
+-- Renommée depuis `scrap_request`. Sur une base MySQL existante, renommer
+-- manuellement : RENAME TABLE scrap_request TO flux_request;
+--                ALTER TABLE flux_request ADD COLUMN provider VARCHAR(64) NOT NULL DEFAULT 'scrap';
 
-CREATE TABLE IF NOT EXISTS scrap_request (
+CREATE TABLE IF NOT EXISTS flux_request (
   id         VARCHAR(64) PRIMARY KEY,
   user_id    VARCHAR(64) NOT NULL,
+  provider   VARCHAR(64) NOT NULL DEFAULT 'scrap',
   url        VARCHAR(512) NOT NULL,
   status     VARCHAR(32) NOT NULL DEFAULT 'pending',
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
