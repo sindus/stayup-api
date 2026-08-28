@@ -216,7 +216,11 @@ describe('GET /connectors/providers', () => {
     const changelog = body.providers.find(
       (p: { name: string }) => p.name === 'changelog',
     )
-    expect(changelog).toEqual({ name: 'changelog', displayName: 'Changelog' })
+    expect(changelog).toEqual({
+      name: 'changelog',
+      displayName: 'Changelog',
+      fluxApproval: 'auto',
+    })
   })
 })
 
