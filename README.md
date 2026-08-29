@@ -100,11 +100,11 @@ Both apply `src/db/schema.sql` first, then insert the super admin.
 |---|---|---|
 | Health | `GET /` | public |
 | Authentication | `POST /auth/register` · `POST /auth/login` · `GET /auth/oauth/{google,github}` and their callbacks | public |
-| Connectors | `GET /connectors` · `GET /connectors/:name` | authenticated |
+| Connectors | `GET /connectors` · `GET /connectors/:name` · `GET /connectors/providers` | authenticated |
 | | `GET /connectors/latest` | admin |
-| Scrap feeds | `GET /scrap` · `POST`/`DELETE /scrap/:repoId/subscribe` · `POST /scrap/requests` | authenticated |
+| Provider fluxes | `GET /providers/:provider/fluxes` · `POST`/`DELETE /providers/:provider/fluxes/:id/subscribe` · `POST /providers/:provider/fluxes` | authenticated |
 | Users | `GET`/`PATCH /ui/users/:userId` · `GET /ui/users/:userId/feed[/:connector]` · `POST`/`DELETE /ui/users/:userId/repositories` | self or admin |
-| Administration | `GET`/`POST`/`DELETE /ui/users` · `/ui/repositories` · `/ui/scrap-requests` | admin |
+| Administration | `GET`/`POST`/`DELETE /ui/users` · `/ui/repositories` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` | admin |
 
 ### Authentication
 
@@ -136,9 +136,14 @@ Further admins are then created from `stayup-ui`'s admin area (super admin only)
 
 OAuth sign-up automatically links the account to an existing user when the email address matches. Callbacks accept a `redirect_uri` using the `stayup://` or `exp://` scheme for mobile deep links; any other scheme is ignored in favour of `UI_URL`.
 
-### Scraping requests
+### Flux approval
 
-A user submits a URL through `POST /scrap/requests`, which creates a request in `pending` state. An admin then handles it with `POST /ui/scrap-requests/:id/approve` — the feed is created and the requester subscribed automatically — or `POST /ui/scrap-requests/:id/reject`.
+Each provider carries a `flux_approval` mode in `provider_registry` (`auto` | `manual`, an admin sets it via `PATCH /ui/providers/:name`). When a user adds a flux that does not exist yet with `POST /providers/:provider/fluxes`:
+
+- `auto` — the source is created and the user subscribed immediately (`201`).
+- `manual` — a request is created in `pending` state (`202`). An admin then handles it with `POST /ui/flux-requests/:id/approve` — the source is created and the requester subscribed automatically — or `POST /ui/flux-requests/:id/reject`. Scraping ships as `manual`.
+
+Subscribing to a flux that already exists is never gated.
 
 ## Databases
 
