@@ -94,6 +94,21 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ─── Pending sign-ups (REGISTRATION_MODE=approval) ───────────────────────────
+-- En mode `approval`, un nouveau compte atterrit ici et n'existe pas encore dans
+-- "user" : il ne peut pas se connecter. Un admin le valide (ligne recopiée dans
+-- "user"/"account") ou le rejette (ligne supprimée). En mode `open` cette table
+-- n'est jamais alimentée.
+CREATE TABLE IF NOT EXISTS pending_user (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  email            TEXT NOT NULL UNIQUE,
+  password_hash    TEXT,
+  oauth_provider   TEXT,
+  oauth_account_id TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ─── Admins ───────────────────────────────────────────────────────────────────
 -- Identités d'administration, distinctes des comptes utilisateurs (pas de feed,
 -- pas d'abonnement). Le premier super admin est créé en ligne de commande

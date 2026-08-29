@@ -465,6 +465,100 @@ describe('DELETE /ui/users/:userId', () => {
   })
 })
 
+describe('Pending sign-ups (approval mode)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const PENDING_ROW = {
+    id: 'p-1',
+    name: 'Ada',
+    email: 'ada@example.com',
+    password_hash: 'hash',
+    oauth_provider: null,
+    oauth_account_id: null,
+    created_at: '2026-01-01',
+  }
+
+  it('GET /ui/users/pending requires an admin', async () => {
+    mockSql([])
+    const res = await app.request(
+      '/ui/users/pending',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('GET /ui/users/pending lists the queue with a method label', async () => {
+    mockSql([
+      [
+        PENDING_ROW,
+        {
+          ...PENDING_ROW,
+          id: 'p-2',
+          password_hash: null,
+          oauth_provider: 'github',
+        },
+      ],
+    ])
+    const res = await app.request(
+      '/ui/users/pending',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.users).toHaveLength(2)
+    expect(body.users[0]).toMatchObject({ id: 'p-1', method: 'password' })
+    expect(body.users[1].method).toBe('github')
+    expect(body.users[0]).not.toHaveProperty('password_hash')
+  })
+
+  it('POST /ui/users/pending/:id/approve creates the account and clears the row', async () => {
+    // getPendingUser → row ; createCredentialUser INSERT user + INSERT account ;
+    // deletePendingUser DELETE RETURNING
+    mockSql([[PENDING_ROW], undefined, undefined, [{ id: 'new-user' }]])
+    const res = await app.request(
+      '/ui/users/pending/p-1/approve',
+      { method: 'POST', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+    const body = await json(res)
+    expect(body.user).toMatchObject({ name: 'Ada', email: 'ada@example.com' })
+  })
+
+  it('POST /ui/users/pending/:id/approve returns 404 for an unknown id', async () => {
+    mockSql([[]])
+    const res = await app.request(
+      '/ui/users/pending/nope/approve',
+      { method: 'POST', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('POST /ui/users/pending/:id/reject drops the row', async () => {
+    mockSql([[{ id: 'p-1' }]])
+    const res = await app.request(
+      '/ui/users/pending/p-1/reject',
+      { method: 'POST', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).success).toBe(true)
+  })
+
+  it('POST /ui/users/pending/:id/reject returns 404 when nothing was removed', async () => {
+    mockSql([[]])
+    const res = await app.request(
+      '/ui/users/pending/nope/reject',
+      { method: 'POST', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+})
+
 // ─── Régression : PATCH ne contenant que `password` ───────────────────────────
 
 describe('PATCH /ui/users/:userId — utilisateur inexistant', () => {

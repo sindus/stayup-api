@@ -19,7 +19,9 @@ import type {
   DataStore,
   FluxRequestRow,
   NewAdmin,
+  NewPendingUser,
   NewUser,
+  PendingUserRow,
   RegistryEntry,
   Source,
   SubscriptionRow,
@@ -386,6 +388,67 @@ export class SqliteStore implements DataStore {
       throw err
     }
     return { id: userId }
+  }
+
+  // ── Inscriptions en attente ───────────────────────────────────────────────
+
+  async createPendingUser(
+    input: NewPendingUser,
+  ): Promise<{ id: string } | null> {
+    if (
+      this.one('SELECT id FROM pending_user WHERE lower(email) = ?', [
+        input.email,
+      ])
+    ) {
+      return null
+    }
+    const id = crypto.randomUUID()
+    this.db.run(
+      `INSERT INTO pending_user
+         (id, name, email, password_hash, oauth_provider, oauth_account_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.name,
+        input.email,
+        input.passwordHash ?? null,
+        input.oauthProvider ?? null,
+        input.oauthAccountId ?? null,
+        new Date().toISOString(),
+      ],
+    )
+    return { id }
+  }
+
+  async findPendingUserByEmail(email: string): Promise<PendingUserRow | null> {
+    return this.one<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user WHERE lower(email) = ? LIMIT 1`,
+      [email],
+    )
+  }
+
+  async listPendingUsers(): Promise<PendingUserRow[]> {
+    return this.all<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user ORDER BY created_at`,
+    )
+  }
+
+  async getPendingUser(id: string): Promise<PendingUserRow | null> {
+    return this.one<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user WHERE id = ?`,
+      [id],
+    )
+  }
+
+  async deletePendingUser(id: string): Promise<boolean> {
+    const existed = Boolean(
+      this.one('SELECT id FROM pending_user WHERE id = ?', [id]),
+    )
+    this.db.run('DELETE FROM pending_user WHERE id = ?', [id])
+    return existed
   }
 
   async findCredentialByEmail(email: string) {

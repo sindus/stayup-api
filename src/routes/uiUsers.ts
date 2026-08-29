@@ -89,6 +89,72 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
   )
 })
 
+// ─── Admin-only: pending sign-ups (REGISTRATION_MODE=approval) ──────────────
+// Déclaré avant `/:userId` pour que le segment statique gagne sur le paramètre.
+
+// GET /ui/users/pending — list accounts awaiting approval
+uiUsersRoute.get('/pending', requireAdmin, async (c) => {
+  const rows = await (await getStore(c.env.DATABASE_URL)).listPendingUsers()
+  return c.json({
+    users: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      method: r.oauth_provider ?? 'password',
+      created_at: r.created_at,
+    })),
+  })
+})
+
+// POST /ui/users/pending/:id/approve — activate the account
+uiUsersRoute.post('/pending/:id/approve', requireAdmin, async (c) => {
+  const id = c.req.param('id') as string
+  const store = await getStore(c.env.DATABASE_URL)
+  const pending = await store.getPendingUser(id)
+  if (!pending) return c.json({ error: 'Pending user not found' }, 404)
+
+  let created: { id: string } | null = null
+  if (pending.password_hash) {
+    created = await store.createCredentialUser({
+      name: pending.name,
+      email: pending.email,
+      passwordHash: pending.password_hash,
+    })
+  } else if (pending.oauth_provider && pending.oauth_account_id) {
+    const user = await store.createOAuthUser({
+      name: pending.name,
+      email: pending.email,
+      emailVerified: !pending.email.endsWith('@users.noreply.stayup'),
+    })
+    await store.linkOAuthAccount(
+      user.id,
+      pending.oauth_provider,
+      pending.oauth_account_id,
+    )
+    created = { id: user.id }
+  }
+
+  if (!created) {
+    // L'e-mail a été pris entre-temps (par une autre inscription validée).
+    return c.json({ error: 'Email already in use' }, 409)
+  }
+
+  await store.deletePendingUser(id)
+  return c.json(
+    { user: { id: created.id, name: pending.name, email: pending.email } },
+    201,
+  )
+})
+
+// POST /ui/users/pending/:id/reject — drop the request
+uiUsersRoute.post('/pending/:id/reject', requireAdmin, async (c) => {
+  const deleted = await (await getStore(c.env.DATABASE_URL)).deletePendingUser(
+    c.req.param('id') as string,
+  )
+  if (!deleted) return c.json({ error: 'Pending user not found' }, 404)
+  return c.json({ success: true })
+})
+
 // GET /ui/users/:userId — get user profile (self or admin)
 uiUsersRoute.get('/:userId', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string

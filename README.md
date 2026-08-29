@@ -54,6 +54,7 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 | `UI_URL` | `http://localhost:3001` | Redirect target after OAuth |
 | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | — | Google OAuth (optional) |
 | `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
+| `REGISTRATION_MODE` | `open` | `open`: sign-ups activate immediately. `approval`: sign-ups queue for an admin — see [Registration modes](#registration-modes) |
 
 On Cloudflare Workers these are set with `wrangler secret put <NAME>`.
 
@@ -135,6 +136,20 @@ npm run create-admin root@example.com "Root" 's3cret'
 Further admins are then created from `stayup-ui`'s admin area (super admin only). Accounts created through registration, OAuth or `npm run create-user` always get the `user` role.
 
 OAuth sign-up automatically links the account to an existing user when the email address matches. Callbacks accept a `redirect_uri` using the `stayup://` or `exp://` scheme for mobile deep links; any other scheme is ignored in favour of `UI_URL`.
+
+`GET /auth/config` (public) reports what a client needs before showing a login screen: the registration mode and which login methods this instance offers (`{ registrationMode, emailPassword, oauth: { google, github } }`).
+
+### Registration modes
+
+`REGISTRATION_MODE` controls what a public sign-up does:
+
+- `open` (default) — `POST /auth/register` creates the account and returns a token (`201`); OAuth sign-up logs the user straight in.
+- `approval` — the sign-up is parked in `pending_user` instead. `POST /auth/register` returns `202 {"status":"pending_approval"}` with **no token**; OAuth redirects back with `?error=pending_approval`; `POST /auth/login` answers `403 {"error":"pending_approval"}`. An admin then works the queue:
+  - `GET /ui/users/pending` — the waiting sign-ups (`method` is `password` or the OAuth provider).
+  - `POST /ui/users/pending/:id/approve` — creates the real account (`201`).
+  - `POST /ui/users/pending/:id/reject` — drops the request (`200`).
+
+Admin-created users (`POST /ui/users`, `npm run create-user`) are always active, whatever the mode. An OAuth sign-up whose verified e-mail already matches an active account is linked to it without going through the queue.
 
 ### Flux approval
 

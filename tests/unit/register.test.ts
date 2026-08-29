@@ -90,3 +90,67 @@ describe('POST /auth/register', () => {
     expect(body).toHaveProperty('error')
   })
 })
+
+describe('POST /auth/register — approval mode', () => {
+  const APPROVAL_ENV = { ...TEST_ENV, REGISTRATION_MODE: 'approval' }
+
+  beforeEach(() => vi.clearAllMocks())
+
+  function register(body: Record<string, string>) {
+    return app.request(
+      '/auth/register',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      APPROVAL_ENV,
+    )
+  }
+
+  it('queues the sign-up and returns 202 without a token', async () => {
+    // findUserByEmail → none ; ensurePendingUserTable (unsafe) ; INSERT
+    mockSql([[], undefined, undefined])
+    const res = await register({
+      name: 'Alice',
+      email: 'alice@example.com',
+      password: 'pass1234',
+    })
+    expect(res.status).toBe(202)
+    const body = await json(res)
+    expect(body).toEqual({ status: 'pending_approval' })
+    expect(body).not.toHaveProperty('token')
+  })
+
+  it('returns 409 when an active account already has that email', async () => {
+    mockSql([[{ id: 'u-1', name: 'Alice' }]])
+    const res = await register({
+      name: 'Alice',
+      email: 'alice@example.com',
+      password: 'pass1234',
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it('returns 409 when a pending sign-up already has that email', async () => {
+    const sql = createSqlMock()
+    // findUserByEmail → none
+    sql.mockImplementationOnce(() => Promise.resolve([]))
+    // ensurePendingUserTable (unsafe) → ok
+    sql.unsafe.mockResolvedValueOnce(undefined)
+    // INSERT pending_user → unique violation
+    sql.mockImplementationOnce(() => {
+      const err = new Error('duplicate') as Error & { code?: string }
+      err.code = '23505'
+      return Promise.reject(err)
+    })
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await register({
+      name: 'Alice',
+      email: 'alice@example.com',
+      password: 'pass1234',
+    })
+    expect(res.status).toBe(409)
+  })
+})

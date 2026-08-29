@@ -13,7 +13,9 @@ import type {
   DataStore,
   FluxRequestRow,
   NewAdmin,
+  NewPendingUser,
   NewUser,
+  PendingUserRow,
   RegistryEntry,
   Source,
   SubscriptionRow,
@@ -403,6 +405,90 @@ export class PostgresStore implements DataStore {
       throw err
     }
     return { id: userId }
+  }
+
+  // ── Inscriptions en attente ───────────────────────────────────────────────
+
+  /** Workers n'applique jamais schema.sql : la table naît au premier usage. */
+  private async ensurePendingUserTable(): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS pending_user (
+           id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
+           password_hash TEXT, oauth_provider TEXT, oauth_account_id TEXT,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      )
+      .catch(() => {})
+  }
+
+  async createPendingUser(
+    input: NewPendingUser,
+  ): Promise<{ id: string } | null> {
+    await this.ensurePendingUserTable()
+    const id = crypto.randomUUID()
+    try {
+      await this.sql`
+        INSERT INTO pending_user
+          (id, name, email, password_hash, oauth_provider, oauth_account_id, created_at)
+        VALUES (${id}, ${input.name}, ${input.email}, ${input.passwordHash ?? null},
+                ${input.oauthProvider ?? null}, ${input.oauthAccountId ?? null},
+                ${new Date().toISOString()})
+      `
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') return null
+      throw err
+    }
+    return { id }
+  }
+
+  async findPendingUserByEmail(email: string): Promise<PendingUserRow | null> {
+    try {
+      const [row] = await this.sql<PendingUserRow[]>`
+        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+        FROM pending_user WHERE LOWER(email) = ${email} LIMIT 1
+      `
+      return row ?? null
+    } catch (err) {
+      if ((err as { code?: string }).code === '42P01') return null
+      throw err
+    }
+  }
+
+  async listPendingUsers(): Promise<PendingUserRow[]> {
+    try {
+      return await this.sql<PendingUserRow[]>`
+        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+        FROM pending_user ORDER BY created_at
+      `
+    } catch (err) {
+      if ((err as { code?: string }).code === '42P01') return []
+      throw err
+    }
+  }
+
+  async getPendingUser(id: string): Promise<PendingUserRow | null> {
+    try {
+      const [row] = await this.sql<PendingUserRow[]>`
+        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+        FROM pending_user WHERE id = ${id}
+      `
+      return row ?? null
+    } catch (err) {
+      if ((err as { code?: string }).code === '42P01') return null
+      throw err
+    }
+  }
+
+  async deletePendingUser(id: string): Promise<boolean> {
+    try {
+      const rows = await this.sql<{ id: string }[]>`
+        DELETE FROM pending_user WHERE id = ${id} RETURNING id
+      `
+      return rows.length > 0
+    } catch (err) {
+      if ((err as { code?: string }).code === '42P01') return false
+      throw err
+    }
   }
 
   async findCredentialByEmail(email: string) {

@@ -21,7 +21,9 @@ import type {
   DataStore,
   FluxRequestRow,
   NewAdmin,
+  NewPendingUser,
   NewUser,
+  PendingUserRow,
   RegistryEntry,
   Source,
   SubscriptionRow,
@@ -430,6 +432,62 @@ export class MysqlStore implements DataStore {
       throw err
     }
     return { id: userId }
+  }
+
+  // ── Inscriptions en attente ───────────────────────────────────────────────
+
+  async createPendingUser(
+    input: NewPendingUser,
+  ): Promise<{ id: string } | null> {
+    const taken = await this.one(
+      'SELECT id FROM pending_user WHERE LOWER(email) = ?',
+      [input.email],
+    )
+    if (taken) return null
+
+    const id = crypto.randomUUID()
+    await this.db.run(
+      `INSERT INTO pending_user
+         (id, name, email, password_hash, oauth_provider, oauth_account_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.name,
+        input.email,
+        input.passwordHash ?? null,
+        input.oauthProvider ?? null,
+        input.oauthAccountId ?? null,
+      ],
+    )
+    return { id }
+  }
+
+  async findPendingUserByEmail(email: string): Promise<PendingUserRow | null> {
+    return this.one<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user WHERE LOWER(email) = ? LIMIT 1`,
+      [email],
+    )
+  }
+
+  async listPendingUsers(): Promise<PendingUserRow[]> {
+    return this.all<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user ORDER BY created_at`,
+    )
+  }
+
+  async getPendingUser(id: string): Promise<PendingUserRow | null> {
+    return this.one<PendingUserRow>(
+      `SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
+       FROM pending_user WHERE id = ?`,
+      [id],
+    )
+  }
+
+  async deletePendingUser(id: string): Promise<boolean> {
+    const res = await this.db.run('DELETE FROM pending_user WHERE id = ?', [id])
+    return res.affectedRows > 0
   }
 
   async findCredentialByEmail(email: string) {

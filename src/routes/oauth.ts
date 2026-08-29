@@ -3,7 +3,7 @@ import { sign, verify } from 'hono/jwt'
 import type { DataStore } from '../db/port.js'
 import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
-import type { Bindings } from '../types.js'
+import { type Bindings, registrationMode } from '../types.js'
 
 export const oauthRoute = new Hono<{ Bindings: Bindings }>()
 
@@ -78,7 +78,7 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
   }
 
   const store = await getStore(c.env.DATABASE_URL)
-  const token = await findOrCreateOAuthUser(
+  const result = await findOrCreateOAuthUser(
     store,
     'google',
     profile.id,
@@ -86,13 +86,12 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     profile.verified_email === false ? '' : profile.email,
     profile.name,
     c.env.JWT_SECRET,
+    registrationMode(c.env),
   )
 
-  const finalRedirect = isMobileRedirectUri(statePayload.redirect_uri)
-    ? `${statePayload.redirect_uri}?token=${token}`
-    : `${c.env.UI_URL}/api/auth/callback?token=${token}`
-
-  return c.redirect(finalRedirect)
+  return c.redirect(
+    oauthCallbackRedirect(c.env, statePayload.redirect_uri, result),
+  )
 })
 
 // ─── GitHub ───────────────────────────────────────────────────────────────────
@@ -193,23 +192,37 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
   }
 
   const store = await getStore(c.env.DATABASE_URL)
-  const token = await findOrCreateOAuthUser(
+  const result = await findOrCreateOAuthUser(
     store,
     'github',
     String(profile.id),
     email,
     profile.name ?? profile.login,
     c.env.JWT_SECRET,
+    registrationMode(c.env),
   )
 
-  const finalRedirect = isMobileRedirectUri(statePayload.redirect_uri)
-    ? `${statePayload.redirect_uri}?token=${token}`
-    : `${c.env.UI_URL}/api/auth/callback?token=${token}`
-
-  return c.redirect(finalRedirect)
+  return c.redirect(
+    oauthCallbackRedirect(c.env, statePayload.redirect_uri, result),
+  )
 })
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
+
+/** Construit l'URL de retour après OAuth : `?token=` en succès, ou
+ *  `?error=pending_approval` si le compte attend une validation admin. */
+function oauthCallbackRedirect(
+  env: Bindings,
+  redirectUri: string | undefined,
+  result: { token: string } | { pending: true },
+): string {
+  const base = isMobileRedirectUri(redirectUri)
+    ? redirectUri
+    : `${env.UI_URL}/api/auth/callback`
+  const query =
+    'pending' in result ? 'error=pending_approval' : `token=${result.token}`
+  return `${base}?${query}`
+}
 
 // L'URI de retour est fournie par l'appelant *avant* la signature du state : la
 // signer ne la rend donc pas fiable. Sans liste blanche, `exp://n-importe-quel-hote`
@@ -260,7 +273,8 @@ async function findOrCreateOAuthUser(
   email: string,
   name: string,
   jwtSecret: string,
-): Promise<string> {
+  mode: 'open' | 'approval',
+): Promise<{ token: string } | { pending: true }> {
   // Check if OAuth account exists
   const existing = await store.findOAuthAccount(provider, providerAccountId)
 
@@ -284,13 +298,30 @@ async function findOrCreateOAuthUser(
       : null
 
     if (byEmail) {
+      // L'e-mail vérifié correspond à un compte déjà actif : on lie ce provider
+      // à ce compte, aucune validation à demander.
       userId = byEmail.id
       resolvedName = byEmail.name
       resolvedEmail = verifiedEmail
     } else {
-      resolvedName = name
       resolvedEmail =
         verifiedEmail || `${provider}-${providerAccountId}@users.noreply.stayup`
+
+      // Identité neuve + mode `approval` : on met en attente au lieu de créer le
+      // compte. La ligne stocke le provider pour que la validation admin puisse
+      // recréer l'identité à l'identique. Un doublon (déjà en attente) est un
+      // no-op : le résultat est le même, « en attente ».
+      if (mode === 'approval') {
+        await store.createPendingUser({
+          name,
+          email: resolvedEmail,
+          oauthProvider: provider,
+          oauthAccountId: providerAccountId,
+        })
+        return { pending: true }
+      }
+
+      resolvedName = name
       userId = (
         await store.createOAuthUser({
           name,
@@ -303,7 +334,7 @@ async function findOrCreateOAuthUser(
     await store.linkOAuthAccount(userId, provider, providerAccountId)
   }
 
-  return sign(
+  const token = await sign(
     {
       sub: userId,
       role: 'user',
@@ -314,4 +345,5 @@ async function findOrCreateOAuthUser(
     jwtSecret,
     'HS256',
   )
+  return { token }
 }

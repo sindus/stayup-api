@@ -113,3 +113,32 @@ describe('GET /auth/me', () => {
     expect((await json(res)).role).toBe('admin')
   })
 })
+
+describe('POST /auth/login (user)', () => {
+  function login(env = TEST_ENV) {
+    return app.request(
+      '/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'ada@example.com', password: 'secret' }),
+      },
+      env,
+    )
+  }
+
+  it('returns 401 when no credential and no pending sign-up match', async () => {
+    // findCredentialByEmail → none ; findPendingUserByEmail → none
+    mockSql([[], []])
+    const res = await login()
+    expect(res.status).toBe(401)
+  })
+
+  it('returns 403 pending_approval when the account still awaits validation', async () => {
+    // findCredentialByEmail → none ; findPendingUserByEmail → one row
+    mockSql([[], [{ id: 'p-1', name: 'Ada', email: 'ada@example.com' }]])
+    const res = await login()
+    expect(res.status).toBe(403)
+    expect((await json(res)).error).toBe('pending_approval')
+  })
+})

@@ -119,11 +119,48 @@ export const openApiSpec = {
         },
       },
     },
+    '/auth/config': {
+      get: {
+        summary: 'Configuration publique de l’authentification',
+        description:
+          'Ce qu’un client doit savoir avant d’afficher l’écran de connexion : ' +
+          'mode d’inscription (`open` | `approval`) et méthodes de login disponibles.',
+        tags: ['Authentification'],
+        responses: {
+          200: {
+            description: 'Configuration',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    registrationMode: {
+                      type: 'string',
+                      enum: ['open', 'approval'],
+                    },
+                    emailPassword: { type: 'boolean' },
+                    oauth: {
+                      type: 'object',
+                      properties: {
+                        google: { type: 'boolean' },
+                        github: { type: 'boolean' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/auth/register': {
       post: {
         summary: 'Créer un compte utilisateur',
         description:
-          'Inscription publique. Crée un utilisateur et retourne immédiatement un JWT.',
+          'Inscription publique. En mode `open`, crée l’utilisateur et retourne ' +
+          'un JWT (201). En mode `approval`, met la demande en attente (202, sans ' +
+          'token) jusqu’à validation d’un admin.',
         tags: ['Authentification'],
         requestBody: {
           required: true,
@@ -156,6 +193,9 @@ export const openApiSpec = {
                 },
               },
             },
+          },
+          202: {
+            description: 'Mode approval : demande en attente de validation',
           },
           400: { description: 'Champs requis manquants' },
           409: { description: 'Email déjà utilisé' },
@@ -679,6 +719,62 @@ export const openApiSpec = {
           403: { description: 'Super admin requis, ou cible super admin' },
           404: { description: 'Admin introuvable' },
           409: { description: 'On ne peut pas se supprimer soi-même' },
+        },
+      },
+    },
+    '/ui/users/pending': {
+      get: {
+        summary: 'Inscriptions en attente de validation',
+        description:
+          'Comptes créés en mode `approval` et pas encore activés. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: 'Liste des inscriptions en attente' },
+          403: { description: 'Admin requis' },
+        },
+      },
+    },
+    '/ui/users/pending/{id}/approve': {
+      post: {
+        summary: 'Valider une inscription en attente',
+        description:
+          'Crée le compte à partir de la demande (e-mail ou OAuth) et retire la ' +
+          'ligne en attente. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          201: { description: 'Compte créé' },
+          404: { description: 'Demande introuvable' },
+          409: { description: 'Email déjà utilisé entre-temps' },
+        },
+      },
+    },
+    '/ui/users/pending/{id}/reject': {
+      post: {
+        summary: 'Rejeter une inscription en attente',
+        description: 'Supprime la demande. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Demande rejetée' },
+          404: { description: 'Demande introuvable' },
         },
       },
     },

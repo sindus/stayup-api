@@ -82,6 +82,27 @@ export interface NewUser {
   passwordHash: string
 }
 
+/** Une inscription en attente de validation admin (REGISTRATION_MODE=approval).
+ *  `password_hash` porté pour un compte e-mail, `oauth_*` pour un compte OAuth ;
+ *  l'un ou l'autre, jamais les deux. */
+export interface PendingUserRow {
+  id: string
+  name: string
+  email: string
+  password_hash: string | null
+  oauth_provider: string | null
+  oauth_account_id: string | null
+  created_at: string
+}
+
+export interface NewPendingUser {
+  name: string
+  email: string
+  passwordHash?: string
+  oauthProvider?: string
+  oauthAccountId?: string
+}
+
 /** Un administrateur. Identité distincte d'un utilisateur : pas de feed, pas
  *  d'abonnement. `is_super` = habilité à gérer les autres admins. */
 export interface AdminRow {
@@ -170,6 +191,18 @@ export interface DataStore {
 
   /** Crée l'utilisateur et son compte mot de passe d'un seul tenant. */
   createCredentialUser(user: NewUser): Promise<{ id: string } | null>
+
+  // ── Inscriptions en attente (REGISTRATION_MODE=approval) ──────────────────
+  // Un compte qui attend la validation d'un admin. Tant qu'il est là, il
+  // n'existe pas dans `user` et ne peut pas se connecter.
+
+  /** Enregistre une inscription en attente. Renvoie null si l'e-mail est déjà pris. */
+  createPendingUser(input: NewPendingUser): Promise<{ id: string } | null>
+  findPendingUserByEmail(email: string): Promise<PendingUserRow | null>
+  listPendingUsers(): Promise<PendingUserRow[]>
+  getPendingUser(id: string): Promise<PendingUserRow | null>
+  /** Supprime la ligne (validation faite, ou rejet). false si elle n'existait pas. */
+  deletePendingUser(id: string): Promise<boolean>
   findCredentialByEmail(email: string): Promise<{
     id: string
     name: string

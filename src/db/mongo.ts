@@ -27,7 +27,9 @@ import type {
   DataStore,
   FluxRequestRow,
   NewAdmin,
+  NewPendingUser,
   NewUser,
+  PendingUserRow,
   RegistryEntry,
   Source,
   SubscriptionRow,
@@ -89,6 +91,9 @@ export async function ensureIndexes(db: Db): Promise<void> {
     .createIndex({ user_id: 1, repository_id: 1 }, { unique: true })
   await db.collection('account').createIndex({ provider_id: 1, account_id: 1 })
   await db.collection('admin').createIndex({ email: 1 }, { unique: true })
+  await db
+    .collection('pending_user')
+    .createIndex({ email: 1 }, { unique: true })
   // Migration douce : renomme l'ancienne collection AVANT de toucher la nouvelle.
   const names = (
     await db.listCollections({}, { nameOnly: true }).toArray()
@@ -510,6 +515,68 @@ export class MongoStore implements DataStore {
       throw err
     }
     return { id }
+  }
+
+  // ── Inscriptions en attente ───────────────────────────────────────────────
+
+  async createPendingUser(
+    input: NewPendingUser,
+  ): Promise<{ id: string } | null> {
+    if (await this.col('pending_user').findOne(sameEmail(input.email))) {
+      return null
+    }
+    const id = crypto.randomUUID()
+    try {
+      await this.col('pending_user').insertOne({
+        _id: id,
+        name: input.name,
+        email: input.email,
+        password_hash: input.passwordHash ?? null,
+        oauth_provider: input.oauthProvider ?? null,
+        oauth_account_id: input.oauthAccountId ?? null,
+        created_at: nowIso(),
+      } as Stored)
+    } catch (err) {
+      // Course avec l'index unique : deux inscriptions du même e-mail.
+      if ((err as { code?: number }).code === DUPLICATE_KEY) return null
+      throw err
+    }
+    return { id }
+  }
+
+  private toPendingRow(r: Stored): PendingUserRow {
+    return {
+      id: String(r._id),
+      name: r.name as string,
+      email: r.email as string,
+      password_hash: (r.password_hash as string | null) ?? null,
+      oauth_provider: (r.oauth_provider as string | null) ?? null,
+      oauth_account_id: (r.oauth_account_id as string | null) ?? null,
+      created_at: r.created_at as string,
+    }
+  }
+
+  async findPendingUserByEmail(email: string): Promise<PendingUserRow | null> {
+    const row = await this.col('pending_user').findOne(sameEmail(email))
+    return row ? this.toPendingRow(row) : null
+  }
+
+  async listPendingUsers(): Promise<PendingUserRow[]> {
+    const rows = await this.col('pending_user')
+      .find({})
+      .sort({ created_at: 1 })
+      .toArray()
+    return rows.map((r) => this.toPendingRow(r))
+  }
+
+  async getPendingUser(id: string): Promise<PendingUserRow | null> {
+    const row = await this.col('pending_user').findOne({ _id: id })
+    return row ? this.toPendingRow(row) : null
+  }
+
+  async deletePendingUser(id: string): Promise<boolean> {
+    const res = await this.col('pending_user').deleteOne({ _id: id })
+    return res.deletedCount > 0
   }
 
   async findCredentialByEmail(email: string) {

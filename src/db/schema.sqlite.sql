@@ -85,6 +85,20 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- ─── Inscriptions en attente (REGISTRATION_MODE=approval) ────────────────────
+-- En mode `approval`, un compte neuf atterrit ici et n'existe pas encore dans
+-- "user" : il ne peut pas se connecter tant qu'un admin ne l'a pas validé.
+
+CREATE TABLE IF NOT EXISTS pending_user (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  email            TEXT NOT NULL UNIQUE,
+  password_hash    TEXT,
+  oauth_provider   TEXT,
+  oauth_account_id TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ─── Admins ───────────────────────────────────────────────────────────────────
 -- Identités d'administration, distinctes des comptes utilisateurs. Le premier
 -- super admin est créé en ligne de commande ; les autres depuis l'interface.

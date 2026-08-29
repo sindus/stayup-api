@@ -512,6 +512,68 @@ export function runDataStoreConformance(
       })
     })
 
+    // ── Inscriptions en attente (REGISTRATION_MODE=approval) ───────────────
+
+    it('suit le cycle de vie d’une inscription en attente (e-mail)', async () => {
+      const store = await harness.freshStore()
+
+      expect(await store.listPendingUsers()).toEqual([])
+      expect(await store.findPendingUserByEmail('ada@example.com')).toBeNull()
+
+      const created = await store.createPendingUser({
+        name: 'Ada',
+        email: 'ada@example.com',
+        passwordHash: 'hash',
+      })
+      if (!created) throw new Error('création inattendue en échec')
+
+      // Un deuxième e-mail identique est refusé.
+      expect(
+        await store.createPendingUser({
+          name: 'Autre',
+          email: 'ada@example.com',
+          passwordHash: 'x',
+        }),
+      ).toBeNull()
+
+      const found = await store.findPendingUserByEmail('ada@example.com')
+      expect(found).toMatchObject({
+        id: created.id,
+        name: 'Ada',
+        email: 'ada@example.com',
+        password_hash: 'hash',
+        oauth_provider: null,
+        oauth_account_id: null,
+      })
+      expect(await store.getPendingUser(created.id)).toMatchObject({
+        id: created.id,
+      })
+      expect((await store.listPendingUsers()).map((r) => r.id)).toEqual([
+        created.id,
+      ])
+
+      expect(await store.deletePendingUser(created.id)).toBe(true)
+      expect(await store.deletePendingUser(created.id)).toBe(false)
+      expect(await store.listPendingUsers()).toEqual([])
+    })
+
+    it('porte le provider OAuth d’une inscription en attente', async () => {
+      const store = await harness.freshStore()
+      const created = await store.createPendingUser({
+        name: 'Grace',
+        email: 'grace@example.com',
+        oauthProvider: 'github',
+        oauthAccountId: 'gh-42',
+      })
+      if (!created) throw new Error('création inattendue en échec')
+
+      expect(await store.getPendingUser(created.id)).toMatchObject({
+        password_hash: null,
+        oauth_provider: 'github',
+        oauth_account_id: 'gh-42',
+      })
+    })
+
     // ── Réglage d'approbation d'un provider ────────────────────────────────
 
     it('bascule le mode d’approbation d’un provider', async () => {

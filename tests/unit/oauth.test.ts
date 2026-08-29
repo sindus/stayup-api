@@ -376,6 +376,52 @@ describe('résolution du compte OAuth', () => {
     expect(payload.email).toBe('alice@example.com')
     expect(sql).toHaveBeenCalledTimes(4) // SELECT ×2 + INSERT ×2
   })
+
+  it('queues a brand-new identity for approval instead of issuing a token', async () => {
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ access_token: 'at' }))
+      .mockResolvedValueOnce(
+        okResponse({ id: 'g-1', email: 'alice@example.com', name: 'Alice' }),
+      )
+    // SELECT account → none ; SELECT user by email → none ;
+    // ensurePendingUserTable (unsafe) ; INSERT pending_user
+    mockSql([[], [], undefined, undefined])
+    const state = await signedState('google')
+
+    const res = await app.request(
+      `/auth/oauth/google/callback?code=abc&state=${state}`,
+      {},
+      { ...TEST_ENV, REGISTRATION_MODE: 'approval' },
+    )
+
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get('location') as string)
+    expect(location.pathname).toBe('/api/auth/callback')
+    expect(location.searchParams.get('error')).toBe('pending_approval')
+    expect(location.searchParams.get('token')).toBeNull()
+  })
+
+  it('still links a verified-email match to an existing account in approval mode', async () => {
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ access_token: 'at' }))
+      .mockResolvedValueOnce(
+        okResponse({ id: 'g-1', email: 'alice@example.com', name: 'Alice' }),
+      )
+    // SELECT account → none ; SELECT user by email → found ; INSERT account
+    mockSql([[], [{ id: 'user-by-email', name: 'Alice' }], []])
+    const state = await signedState('google')
+
+    const res = await app.request(
+      `/auth/oauth/google/callback?code=abc&state=${state}`,
+      {},
+      { ...TEST_ENV, REGISTRATION_MODE: 'approval' },
+    )
+
+    const payload = decodeJwt(
+      tokenFromRedirect(res.headers.get('location') as string),
+    )
+    expect(payload.sub).toBe('user-by-email')
+  })
 })
 
 // Le redirect_uri est choisi par l'appelant avant la signature du state : seule une

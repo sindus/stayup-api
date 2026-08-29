@@ -4,9 +4,24 @@ import { sign } from 'hono/jwt'
 import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
 import { authMiddleware } from '../middleware/auth.js'
-import type { Bindings } from '../types.js'
+import { type Bindings, registrationMode } from '../types.js'
 
 export const authRoute = new Hono<{ Bindings: Bindings }>()
+
+// GET /auth/config — ce qu'un client doit savoir avant de montrer l'écran de
+// connexion : mode d'inscription, et quelles méthodes de login cette instance
+// propose. Public, non authentifié — un client s'en sert justement pour choisir
+// à quelle API se connecter.
+authRoute.get('/config', (c) => {
+  return c.json({
+    registrationMode: registrationMode(c.env),
+    emailPassword: true,
+    oauth: {
+      google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
+      github: Boolean(c.env.GITHUB_CLIENT_ID && c.env.GITHUB_CLIENT_SECRET),
+    },
+  })
+})
 
 function userTokenPayload(userId: string, name: string, email: string) {
   return {
@@ -60,6 +75,16 @@ authRoute.post('/login', async (c) => {
   const account = await store.findCredentialByEmail(normalizeEmail(body.email))
 
   if (!account) {
+    // Compte créé en mode `approval` mais pas encore validé : il n'est pas dans
+    // `user`, donc `findCredentialByEmail` ne le voit pas. On le dit clairement
+    // plutôt que « identifiants invalides », qui enverrait l'utilisateur
+    // ressaisir un mot de passe correct en boucle.
+    const pending = await store.findPendingUserByEmail(
+      normalizeEmail(body.email),
+    )
+    if (pending) {
+      return c.json({ error: 'pending_approval' }, 403)
+    }
     return c.json({ error: 'Invalid credentials' }, 401)
   }
 
@@ -115,10 +140,30 @@ authRoute.post('/register', async (c) => {
   }
 
   const store = await getStore(c.env.DATABASE_URL)
+  const email = normalizeEmail(body.email)
+  const passwordHash = await hash(body.password, 10)
+
+  // Mode `approval` : le compte n'est pas créé, il est mis en attente. Pas de
+  // token — l'utilisateur ne peut pas se connecter avant qu'un admin valide.
+  if (registrationMode(c.env) === 'approval') {
+    if (await store.findUserByEmail(email)) {
+      return c.json({ error: 'Email already in use' }, 409)
+    }
+    const pending = await store.createPendingUser({
+      name: body.name,
+      email,
+      passwordHash,
+    })
+    if (!pending) {
+      return c.json({ error: 'Email already in use' }, 409)
+    }
+    return c.json({ status: 'pending_approval' }, 202)
+  }
+
   const created = await store.createCredentialUser({
     name: body.name,
-    email: normalizeEmail(body.email),
-    passwordHash: await hash(body.password, 10),
+    email,
+    passwordHash,
   })
 
   if (!created) {
@@ -126,7 +171,7 @@ authRoute.post('/register', async (c) => {
   }
 
   const token = await sign(
-    userTokenPayload(created.id, body.name, normalizeEmail(body.email)),
+    userTokenPayload(created.id, body.name, email),
     c.env.JWT_SECRET,
     'HS256',
   )
