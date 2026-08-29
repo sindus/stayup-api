@@ -17,6 +17,7 @@
     "prepare": "husky",
     "create-user": "tsx scripts/create-user.ts",
     "create-admin": "tsx scripts/create-admin.ts",
+    "create-admin:prod": "node dist/scripts/create-admin.js",
     "dev:worker": "wrangler dev",
     "deploy": "wrangler deploy",
     "test:conformance": "vitest run tests/conformance"

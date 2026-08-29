@@ -8,10 +8,24 @@ import { normalizeEmail } from '../src/db/users.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const [, , email, name, password] = process.argv
+// Args take precedence; env vars are the fallback so a caller can avoid putting
+// the password on the command line (e.g. `docker compose run -e ADMIN_PASSWORD`).
+const [, , argEmail, argName, argPassword] = process.argv
+const email = argEmail ?? process.env.ADMIN_EMAIL
+const name = argName ?? process.env.ADMIN_NAME
+const password = argPassword ?? process.env.ADMIN_PASSWORD
 
 if (!email || !name || !password) {
-  console.error('Usage: tsx scripts/create-admin.ts <email> <name> <password>')
+  console.error('Usage: create-admin <email> <name> <password>')
+  console.error(
+    '  (or set ADMIN_EMAIL / ADMIN_NAME / ADMIN_PASSWORD in the environment)',
+  )
+  console.error(
+    '  npm run create-admin  <email> <name> <password>   (from source)',
+  )
+  console.error(
+    '  node dist/scripts/create-admin.js  <email> <name> <password>   (built image)',
+  )
   console.error(
     'Creates a SUPER admin (can manage other admins). Regular admins are',
   )

@@ -71,6 +71,8 @@ On Cloudflare Workers these are set with `wrangler secret put <NAME>`.
 | `npm run typecheck` | Type checking, source **and** tests |
 | `npm run lint` / `lint:fix` | Biome analysis, with or without fixes |
 | `npm run create-user` | Create a user account from the command line |
+| `npm run create-admin` | Bootstrap the first **super admin** (from source) |
+| `npm run create-admin:prod` | Same, from a built image: `node dist/scripts/create-admin.js` |
 | `npm run deploy` | Deploy to Cloudflare Workers |
 
 Creating a user:
@@ -78,6 +80,17 @@ Creating a user:
 ```bash
 npm run create-user -- "Alice" alice@example.com secret123
 ```
+
+Bootstrapping the first super admin — from source, or from the Docker image
+(the built `dist/` already ships the compiled script and `schema.sql`):
+
+```bash
+npm run create-admin  root@example.com "Root" 's3cret'
+# or, inside a container built from the Dockerfile:
+docker compose run --rm api node dist/scripts/create-admin.js root@example.com "Root" 's3cret'
+```
+
+Both apply `src/db/schema.sql` first, then insert the super admin.
 
 ## API
 
