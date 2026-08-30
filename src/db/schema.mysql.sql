@@ -126,6 +126,31 @@ CREATE TABLE IF NOT EXISTS user_repository (
   FOREIGN KEY (repository_id) REFERENCES repository(id)
 );
 
+-- ─── Bases de données secondaires ──────────────────────────────────────────
+-- Bases en lecture seule ne contenant que des tables connector_*. L'API agrège
+-- leur contenu dans les feeds ; elle n'y écrit jamais. `url_enc` : chaîne de
+-- connexion chiffrée (voir db/secretbox.ts).
+
+CREATE TABLE IF NOT EXISTS data_source (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  name       VARCHAR(255) NOT NULL,
+  url_enc    TEXT NOT NULL,
+  engine     VARCHAR(32) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+CREATE TABLE IF NOT EXISTS external_subscription (
+  id             VARCHAR(64) PRIMARY KEY,
+  user_id        VARCHAR(64) NOT NULL,
+  data_source_id INT NOT NULL,
+  provider       VARCHAR(64) NOT NULL,
+  source_url     VARCHAR(512) NOT NULL,
+  created_at     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uniq_external_subscription (user_id, data_source_id, source_url),
+  FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE,
+  FOREIGN KEY (data_source_id) REFERENCES data_source(id) ON DELETE CASCADE
+);
+
 -- ─── Flux requests (file d'approbation) ──────────────────────────────────────
 -- Renommée depuis `scrap_request`. Sur une base MySQL existante, renommer
 -- manuellement : RENAME TABLE scrap_request TO flux_request;

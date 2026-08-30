@@ -153,3 +153,51 @@ export async function getStore(connectionString: string): Promise<DataStore> {
     throw err
   }
 }
+
+// ─── Bases secondaires (agrégation multi-sources) ────────────────────────────
+
+/** Le moteur d'une URL de connexion, ou null si le schéma n'est pas reconnu. */
+export function engineOf(connectionString: string): string | null {
+  const scheme = connectionString.slice(0, connectionString.indexOf(':') + 1)
+  const adapter = ADAPTERS.find((a) => a.schemes.includes(scheme))
+  if (!adapter) return null
+  // Le premier schéma de l'adaptateur sert de nom canonique (`postgres:` etc.).
+  return adapter.schemes[0].replace(':', '')
+}
+
+export interface OpenedDataSource {
+  id: number
+  name: string
+  engine: string
+  store: DataStore
+}
+
+/**
+ * Ouvre un store par base secondaire déclarée dans la base principale. Une base
+ * injoignable est *ignorée* (avec un log) plutôt que de casser tout le feed :
+ * une source externe hors ligne ne doit pas priver l'utilisateur du reste.
+ */
+export async function openSecondaryStores(
+  primary: DataStore,
+  jwtSecret: string,
+): Promise<OpenedDataSource[]> {
+  const rows = await primary.listDataSources().catch(() => [])
+  if (rows.length === 0) return []
+  const { decryptSecret } = await import('./secretbox.js')
+
+  const opened: OpenedDataSource[] = []
+  for (const row of rows) {
+    try {
+      const url = await decryptSecret(row.url_enc, jwtSecret)
+      opened.push({
+        id: row.id,
+        name: row.name,
+        engine: row.engine,
+        store: await getStore(url),
+      })
+    } catch (err) {
+      console.error(`Data source ${row.id} (${row.name}) unavailable:`, err)
+    }
+  }
+  return opened
+}

@@ -134,6 +134,32 @@ CREATE TABLE IF NOT EXISTS user_repository (
   UNIQUE (user_id, repository_id)
 );
 
+-- ─── Secondary data sources ─────────────────────────────────────────────────
+-- Bases supplémentaires, en lecture seule, qui ne contiennent que des tables
+-- connector_*. L'API agrège leur contenu dans les feeds ; elle n'y écrit jamais.
+-- `url_enc` : chaîne de connexion chiffrée (voir db/secretbox.ts).
+
+CREATE TABLE IF NOT EXISTS data_source (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  url_enc    TEXT NOT NULL,
+  engine     TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Abonnement d'un utilisateur à un flux vivant dans une base secondaire. Le flux
+-- y est identifié par son URL — les id numériques ne traversent pas les bases.
+
+CREATE TABLE IF NOT EXISTS external_subscription (
+  id             TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  data_source_id INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
+  provider       TEXT NOT NULL,
+  source_url     TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, data_source_id, source_url)
+);
+
 -- ─── Flux requests (file d'approbation) ──────────────────────────────────────
 -- Renommée depuis `scrap_request` : la file vaut pour tout provider en mode
 -- `manual`, pas seulement le scraping. Le RENAME migre les lignes existantes ;

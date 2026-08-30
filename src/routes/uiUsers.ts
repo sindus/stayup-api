@@ -2,7 +2,7 @@ import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type { DataStore } from '../db/port.js'
 import { listProviders } from '../db/providers.js'
-import { getStore } from '../db/store.js'
+import { getStore, openSecondaryStores } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
 import {
   authMiddleware,
@@ -22,34 +22,107 @@ type UserRepo = {
   url: string
   provider: string
   config: Record<string, unknown>
+  /** Renseigné pour un abonnement à un flux d'une base secondaire. */
+  data_source_id?: number
+  data_source_name?: string
+}
+
+/** Identifiant de lien d'un abonnement externe, transporté par le feed et
+ *  reconnu par le DELETE d'abonnement (les bases secondaires n'ont pas d'id de
+ *  lien commun avec la principale). */
+function externalLinkId(dataSourceId: number, url: string): string {
+  return `ext:${dataSourceId}:${encodeURIComponent(url)}`
+}
+
+export function parseExternalLinkId(
+  linkId: string,
+): { dataSourceId: number; url: string } | null {
+  const m = linkId.match(/^ext:(\d+):(.+)$/)
+  if (!m) return null
+  return { dataSourceId: Number(m[1]), url: decodeURIComponent(m[2]) }
 }
 
 async function getFeedForUser(
   store: DataStore,
   userId: string,
+  env: Bindings,
 ): Promise<{
   repositories: UserRepo[]
   connectors: Record<string, unknown[]>
 }> {
-  const repositories = await store.listSubscriptions(userId)
-  const providers = await listProviders(store)
+  const [localSubs, providers, external] = await Promise.all([
+    store.listSubscriptions(userId),
+    listProviders(store),
+    store.listExternalSubscriptions(userId),
+  ])
 
-  if (repositories.length === 0) {
-    return {
-      repositories: [],
-      connectors: Object.fromEntries(providers.map((p) => [p.name, []])),
+  // Contenu local, une clé par provider.
+  const connectors: Record<string, unknown[]> = Object.fromEntries(
+    providers.map((p) => [p.name, [] as unknown[]]),
+  )
+  const localIds = localSubs.map((r) => r.repository_id)
+  if (localIds.length > 0) {
+    await Promise.all(
+      providers.map(async (p) => {
+        connectors[p.name] = await store.latestForSources(p.name, localIds, 10)
+      }),
+    )
+  }
+
+  // Contenu des bases secondaires : résolu par URL, puis tagué par base.
+  const extRepos: UserRepo[] = []
+  if (external.length > 0) {
+    const secondaries = await openSecondaryStores(store, env.JWT_SECRET)
+    for (const s of secondaries) {
+      const subs = external.filter((e) => e.data_source_id === s.id)
+      if (subs.length === 0) continue
+
+      const byProvider = new Map<string, string[]>()
+      for (const sub of subs) {
+        const list = byProvider.get(sub.provider) ?? []
+        list.push(sub.source_url)
+        byProvider.set(sub.provider, list)
+      }
+
+      for (const [provider, urls] of byProvider) {
+        const sources = await s.store
+          .listSourcesOfType(provider, userId)
+          .catch(() => [])
+        const idByUrl = new Map(sources.map((r) => [r.url, r.id]))
+        const ids = urls
+          .map((u) => idByUrl.get(u))
+          .filter((v): v is number => typeof v === 'number')
+
+        const rows =
+          ids.length > 0
+            ? await s.store.latestForSources(provider, ids, 10)
+            : []
+        connectors[provider] = [
+          ...(connectors[provider] ?? []),
+          ...rows.map((r) => ({
+            ...(r as Record<string, unknown>),
+            _data_source_id: s.id,
+            _data_source_name: s.name,
+          })),
+        ]
+
+        for (const url of urls) {
+          extRepos.push({
+            id: externalLinkId(s.id, url),
+            repository_id: 0,
+            created_at: '',
+            url,
+            provider,
+            config: {},
+            data_source_id: s.id,
+            data_source_name: s.name,
+          })
+        }
+      }
     }
   }
 
-  const repoIds = repositories.map((r) => r.repository_id)
-  const entries = await Promise.all(
-    providers.map(
-      async (p) =>
-        [p.name, await store.latestForSources(p.name, repoIds, 10)] as const,
-    ),
-  )
-
-  return { repositories, connectors: Object.fromEntries(entries) }
+  return { repositories: [...localSubs, ...extRepos], connectors }
 }
 
 // ─── Admin-only: user management ────────────────────────────────────────────
@@ -240,7 +313,11 @@ uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
 // GET /ui/users/:userId/feed
 uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const data = await getFeedForUser(await getStore(c.env.DATABASE_URL), userId)
+  const data = await getFeedForUser(
+    await getStore(c.env.DATABASE_URL),
+    userId,
+    c.env,
+  )
   return c.json(data)
 })
 
@@ -361,6 +438,21 @@ uiUsersRoute.delete(
     const userId = c.req.param('userId') as string
     const linkId = c.req.param('linkId') as string
     const store = await getStore(c.env.DATABASE_URL)
+
+    // Abonnement à un flux d'une base secondaire : identifié par (base, URL), pas
+    // par un id de lien local. On se contente de désabonner — la base est en
+    // lecture seule, rien à purger.
+    const ext = parseExternalLinkId(linkId)
+    if (ext) {
+      const removed = await store.unsubscribeExternal(
+        userId,
+        ext.dataSourceId,
+        ext.url,
+      )
+      if (!removed) return c.json({ error: 'Feed not found' }, 404)
+      return c.json({ success: true })
+    }
+
     const link = await store.findSubscription(linkId, userId)
 
     if (!link) return c.json({ error: 'Feed not found' }, 404)

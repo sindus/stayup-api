@@ -24,7 +24,9 @@ import type { Collection, Db, Document } from 'mongodb'
 import type {
   AdminRow,
   ContentRow,
+  DataSourceRow,
   DataStore,
+  ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
   NewPendingUser,
@@ -94,6 +96,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
   await db
     .collection('pending_user')
     .createIndex({ email: 1 }, { unique: true })
+  await db
+    .collection('external_subscription')
+    .createIndex(
+      { user_id: 1, data_source_id: 1, source_url: 1 },
+      { unique: true },
+    )
   // Migration douce : renomme l'ancienne collection AVANT de toucher la nouvelle.
   const names = (
     await db.listCollections({}, { nameOnly: true }).toArray()
@@ -576,6 +584,94 @@ export class MongoStore implements DataStore {
 
   async deletePendingUser(id: string): Promise<boolean> {
     const res = await this.col('pending_user').deleteOne({ _id: id })
+    return res.deletedCount > 0
+  }
+
+  // ── Bases de données secondaires ─────────────────────────────────────────
+
+  async listDataSources(): Promise<DataSourceRow[]> {
+    const rows = await this.col('data_source')
+      .find({})
+      .sort({ _id: 1 })
+      .toArray()
+    return rows.map((r) => ({
+      id: r._id as number,
+      name: r.name as string,
+      engine: r.engine as string,
+      url_enc: r.url_enc as string,
+      created_at: r.created_at as string,
+    }))
+  }
+
+  async createDataSource(input: {
+    name: string
+    engine: string
+    urlEnc: string
+  }): Promise<{ id: number }> {
+    const id = await this.nextId('data_source')
+    await this.col('data_source').insertOne({
+      _id: id,
+      name: input.name,
+      engine: input.engine,
+      url_enc: input.urlEnc,
+      created_at: nowIso(),
+    } as Stored)
+    return { id }
+  }
+
+  async deleteDataSource(id: number): Promise<boolean> {
+    const res = await this.col('data_source').deleteOne({ _id: id })
+    if (res.deletedCount === 0) return false
+    // Rien ne cascade en Mongo : on retire les abonnements qui visaient cette base.
+    await this.col('external_subscription').deleteMany({ data_source_id: id })
+    return true
+  }
+
+  async listExternalSubscriptions(
+    userId: string,
+  ): Promise<ExternalSubscriptionRow[]> {
+    const rows = await this.col('external_subscription')
+      .find({ user_id: userId })
+      .toArray()
+    return rows.map((r) => ({
+      data_source_id: r.data_source_id as number,
+      provider: r.provider as string,
+      source_url: r.source_url as string,
+    }))
+  }
+
+  async subscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    provider: string,
+    url: string,
+  ): Promise<ExternalSubscriptionRow | null> {
+    try {
+      await this.col('external_subscription').insertOne({
+        _id: crypto.randomUUID(),
+        user_id: userId,
+        data_source_id: dataSourceId,
+        provider,
+        source_url: url,
+        created_at: nowIso(),
+      } as Stored)
+    } catch (err) {
+      if ((err as { code?: number }).code === DUPLICATE_KEY) return null
+      throw err
+    }
+    return { data_source_id: dataSourceId, provider, source_url: url }
+  }
+
+  async unsubscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    url: string,
+  ): Promise<boolean> {
+    const res = await this.col('external_subscription').deleteOne({
+      user_id: userId,
+      data_source_id: dataSourceId,
+      source_url: url,
+    })
     return res.deletedCount > 0
   }
 

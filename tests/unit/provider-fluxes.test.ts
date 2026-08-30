@@ -181,3 +181,62 @@ describe('DELETE /providers/:provider/fluxes/:id/subscribe', () => {
     expect((await json(res)).success).toBe(true)
   })
 })
+
+describe('POST /providers/:provider/fluxes/:id/subscribe — secondary database', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('subscribes to a flux living in a declared secondary database', async () => {
+    const { encryptSecret } = await import('../../src/db/secretbox.js')
+    const urlEnc = await encryptSecret(
+      'postgres://sec:pw@host:5432/db',
+      TEST_ENV.JWT_SECRET,
+    )
+    mockSql([
+      undefined, // openSecondaryStores → ensureMultiDbTables (unsafe)
+      [
+        {
+          id: 5,
+          name: 'Cluster A',
+          engine: 'postgres',
+          url_enc: urlEnc,
+          created_at: 'x',
+        },
+      ], // listDataSources
+      [{ id: 3, url: 'https://ext.dev/feed', type: 'rss', config: {} }], // getSource(3) in the secondary
+      undefined, // subscribeExternal → ensureMultiDbTables (unsafe)
+      undefined, // INSERT external_subscription
+    ])
+
+    const res = await app.request(
+      '/providers/rss/fluxes/3/subscribe',
+      {
+        method: 'POST',
+        headers: {
+          ...(await userHeaders()),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dataSourceId: 5 }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+    expect((await json(res)).success).toBe(true)
+  })
+
+  it('404s when the referenced secondary database is unknown', async () => {
+    mockSql([undefined, []]) // no data_source rows
+    const res = await app.request(
+      '/providers/rss/fluxes/3/subscribe',
+      {
+        method: 'POST',
+        headers: {
+          ...(await userHeaders()),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dataSourceId: 9 }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+})

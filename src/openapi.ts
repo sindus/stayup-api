@@ -722,6 +722,98 @@ export const openApiSpec = {
         },
       },
     },
+    '/ui/data-sources': {
+      get: {
+        summary: 'Bases de données secondaires',
+        description:
+          'La base principale (info) + les bases secondaires déclarées. La chaîne ' +
+          'de connexion n’est jamais renvoyée — seul l’hôte. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: 'Base principale + bases secondaires' },
+          403: { description: 'Admin requis' },
+        },
+      },
+      post: {
+        summary: 'Ajouter une base secondaire',
+        description:
+          'Teste l’URL, refuse si aucune table connector_* n’y existe, puis ' +
+          'l’enregistre chiffrée. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'url'],
+                properties: {
+                  name: { type: 'string' },
+                  url: {
+                    type: 'string',
+                    example: 'postgres://user:pass@host:5432/db',
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: 'Base ajoutée' },
+          400: { description: 'URL invalide, injoignable, ou sans connecteur' },
+          403: { description: 'Admin requis' },
+        },
+      },
+    },
+    '/ui/data-sources/test': {
+      post: {
+        summary: 'Tester une URL de base sans l’enregistrer',
+        description:
+          'Renvoie `{ ok, engine, connectors }` ou `{ ok: false, error }`. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['url'],
+                properties: { url: { type: 'string' } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Résultat du test' },
+          403: { description: 'Admin requis' },
+        },
+      },
+    },
+    '/ui/data-sources/{id}': {
+      delete: {
+        summary: 'Retirer une base secondaire',
+        description:
+          'Supprime la base et, en cascade, les abonnements externes qui la ' +
+          'visaient. Admin requis.',
+        tags: ['Administration'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: { description: 'Base retirée' },
+          404: { description: 'Base introuvable' },
+        },
+      },
+    },
     '/ui/users/pending': {
       get: {
         summary: 'Inscriptions en attente de validation',

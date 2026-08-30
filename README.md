@@ -187,6 +187,29 @@ opens the kind of connection PostgreSQL uses, so the other three need Docker or 
 The PostgreSQL schema is applied automatically when the container first starts and when
 functional tests run.
 
+### Secondary data sources
+
+`DATABASE_URL` is the **primary** database — users, admins, subscriptions, the provider
+registry, plus whatever connectors write locally. An admin can attach **secondary**
+databases that hold only `connector_*` tables, so one instance aggregates feeds from
+several sources:
+
+- `GET /ui/data-sources` — the primary (engine + host, never the password) and every
+  secondary.
+- `POST /ui/data-sources/test` — `{url}` → `{ ok, engine, connectors }` without saving.
+- `POST /ui/data-sources` — `{name, url}` → re-tests, refuses a database with no
+  `connector_*` table, then stores the URL **encrypted at rest** (AES-GCM, key derived
+  from `JWT_SECRET` — see [`src/db/secretbox.ts`](src/db/secretbox.ts)).
+- `DELETE /ui/data-sources/:id` — removes it and, in cascade, the external subscriptions
+  that pointed at it.
+
+Secondary databases are **read-only**: the API only reads their `connector_*` content.
+`GET /connectors/providers` merges providers by name across all databases; a feed row from
+a secondary carries `_data_source_id` / `_data_source_name`. A user subscribes to a
+secondary flux through the normal `POST /providers/:provider/fluxes/:id/subscribe` with
+`{ "dataSourceId": <n> }` in the body (`external_subscription` table, keyed by URL). An
+unreachable secondary is skipped, never fatal.
+
 Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables — or, under MongoDB, `connector_*` collections — and reads their display name, and an optional display **template** (`provider_registry.template`, a JSON manifest the apps render from — relayed untouched, never parsed here), from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider — and how it looks in the apps — is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list and `docs/display-templates.md` for the complete template reference.
 
 Authentication relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — these are managed by `stayup-ui`.

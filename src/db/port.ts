@@ -103,6 +103,24 @@ export interface NewPendingUser {
   oauthAccountId?: string
 }
 
+/** Une base secondaire déclarée par un admin : lecture seule, ne sert qu'à
+ *  agréger du contenu connector_*. `url_enc` est chiffré (voir db/secretbox.ts). */
+export interface DataSourceRow {
+  id: number
+  name: string
+  engine: string
+  url_enc: string
+  created_at: string
+}
+
+/** Abonnement d'un utilisateur à un flux d'une base secondaire, identifié par
+ *  (base, provider, URL du flux) — les id numériques ne traversent pas les bases. */
+export interface ExternalSubscriptionRow {
+  data_source_id: number
+  provider: string
+  source_url: string
+}
+
 /** Un administrateur. Identité distincte d'un utilisateur : pas de feed, pas
  *  d'abonnement. `is_super` = habilité à gérer les autres admins. */
 export interface AdminRow {
@@ -203,6 +221,34 @@ export interface DataStore {
   getPendingUser(id: string): Promise<PendingUserRow | null>
   /** Supprime la ligne (validation faite, ou rejet). false si elle n'existait pas. */
   deletePendingUser(id: string): Promise<boolean>
+
+  // ── Bases de données secondaires (admin) ─────────────────────────────────
+  // Bases en lecture seule dont on n'agrège que le contenu connector_*.
+
+  listDataSources(): Promise<DataSourceRow[]>
+  createDataSource(input: {
+    name: string
+    engine: string
+    urlEnc: string
+  }): Promise<{ id: number }>
+  /** Supprime la base et, en cascade, les abonnements externes qui la visaient. */
+  deleteDataSource(id: number): Promise<boolean>
+
+  // ── Abonnements à des flux de bases secondaires ──────────────────────────
+
+  listExternalSubscriptions(userId: string): Promise<ExternalSubscriptionRow[]>
+  /** Renvoie null si l'abonnement existe déjà. */
+  subscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    provider: string,
+    url: string,
+  ): Promise<ExternalSubscriptionRow | null>
+  unsubscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    url: string,
+  ): Promise<boolean>
   findCredentialByEmail(email: string): Promise<{
     id: string
     name: string

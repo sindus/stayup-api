@@ -836,3 +836,43 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
     expect(sql).toHaveBeenCalledTimes(4)
   })
 })
+
+describe('parseExternalLinkId', () => {
+  it('round-trips a data-source-scoped link id', async () => {
+    const { parseExternalLinkId } = await import('../../src/routes/uiUsers.js')
+    expect(parseExternalLinkId('ext:7:https%3A%2F%2Fx.dev%2Ffeed')).toEqual({
+      dataSourceId: 7,
+      url: 'https://x.dev/feed',
+    })
+    expect(parseExternalLinkId('link-1')).toBeNull()
+    expect(parseExternalLinkId('ext:notnum:x')).toBeNull()
+  })
+})
+
+describe('DELETE /ui/users/:userId/repositories/:linkId — external flux', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('unsubscribes from a secondary-database flux without purging anything', async () => {
+    // ensureMultiDbTables (unsafe) ; DELETE external_subscription RETURNING → one row
+    const sql = mockSql([undefined, [{ id: 'es-1' }]])
+    const res = await app.request(
+      '/ui/users/1/repositories/ext:5:https%3A%2F%2Fblog.dev%2Ffeed',
+      { method: 'DELETE', headers: await selfToken('1') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).success).toBe(true)
+    // No connector_* / repository purge on a read-only secondary base.
+    expect(sql.unsafe).toHaveBeenCalledTimes(1)
+  })
+
+  it('404s when the external subscription was not there', async () => {
+    mockSql([undefined, []])
+    const res = await app.request(
+      '/ui/users/1/repositories/ext:5:https%3A%2F%2Fnope.dev',
+      { method: 'DELETE', headers: await selfToken('1') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+})

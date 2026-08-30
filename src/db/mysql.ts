@@ -18,7 +18,9 @@
 import type {
   AdminRow,
   ContentRow,
+  DataSourceRow,
   DataStore,
+  ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
   NewPendingUser,
@@ -487,6 +489,74 @@ export class MysqlStore implements DataStore {
 
   async deletePendingUser(id: string): Promise<boolean> {
     const res = await this.db.run('DELETE FROM pending_user WHERE id = ?', [id])
+    return res.affectedRows > 0
+  }
+
+  // ── Bases de données secondaires ─────────────────────────────────────────
+
+  async listDataSources(): Promise<DataSourceRow[]> {
+    return this.all<DataSourceRow>(
+      'SELECT id, name, engine, url_enc, created_at FROM data_source ORDER BY id',
+    )
+  }
+
+  async createDataSource(input: {
+    name: string
+    engine: string
+    urlEnc: string
+  }): Promise<{ id: number }> {
+    const res = await this.db.run(
+      'INSERT INTO data_source (name, engine, url_enc) VALUES (?, ?, ?)',
+      [input.name, input.engine, input.urlEnc],
+    )
+    return { id: res.insertId }
+  }
+
+  async deleteDataSource(id: number): Promise<boolean> {
+    const res = await this.db.run('DELETE FROM data_source WHERE id = ?', [id])
+    return res.affectedRows > 0
+  }
+
+  async listExternalSubscriptions(
+    userId: string,
+  ): Promise<ExternalSubscriptionRow[]> {
+    return this.all<ExternalSubscriptionRow>(
+      `SELECT data_source_id, provider, source_url
+       FROM external_subscription WHERE user_id = ?`,
+      [userId],
+    )
+  }
+
+  async subscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    provider: string,
+    url: string,
+  ): Promise<ExternalSubscriptionRow | null> {
+    const taken = await this.one(
+      `SELECT id FROM external_subscription
+       WHERE user_id = ? AND data_source_id = ? AND source_url = ?`,
+      [userId, dataSourceId, url],
+    )
+    if (taken) return null
+    await this.db.run(
+      `INSERT INTO external_subscription (id, user_id, data_source_id, provider, source_url)
+       VALUES (?, ?, ?, ?, ?)`,
+      [crypto.randomUUID(), userId, dataSourceId, provider, url],
+    )
+    return { data_source_id: dataSourceId, provider, source_url: url }
+  }
+
+  async unsubscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    url: string,
+  ): Promise<boolean> {
+    const res = await this.db.run(
+      `DELETE FROM external_subscription
+       WHERE user_id = ? AND data_source_id = ? AND source_url = ?`,
+      [userId, dataSourceId, url],
+    )
     return res.affectedRows > 0
   }
 

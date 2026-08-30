@@ -21,6 +21,31 @@ function capitalize(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
+/**
+ * Providers vus par plusieurs bases (principale + secondaires), fusionnés par
+ * nom : une seule entrée « rss » même s'il existe dans plusieurs bases. La
+ * première occurrence gagne, sauf pour `template` — on garde celui qui en
+ * déclare un. Chaque ligne de contenu, elle, reste taguée par sa base (voir le
+ * feed).
+ */
+export async function listMergedProviders(
+  stores: DataStore[],
+): Promise<Provider[]> {
+  const lists = await Promise.all(stores.map((s) => listProviders(s)))
+  const merged = new Map<string, Provider>()
+  for (const list of lists) {
+    for (const p of list) {
+      const cur = merged.get(p.name)
+      if (!cur) {
+        merged.set(p.name, p)
+      } else if (cur.template == null && p.template != null) {
+        merged.set(p.name, { ...cur, template: p.template })
+      }
+    }
+  }
+  return [...merged.values()]
+}
+
 export async function listProviders(store: DataStore): Promise<Provider[]> {
   const names = await store.listProviderNames()
   if (names.length === 0) return []

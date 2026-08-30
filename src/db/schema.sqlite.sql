@@ -122,6 +122,29 @@ CREATE TABLE IF NOT EXISTS user_repository (
   UNIQUE (user_id, repository_id)
 );
 
+-- ─── Bases de données secondaires ───────────────────────────────────────────
+-- Bases en lecture seule ne contenant que des tables connector_*. L'API agrège
+-- leur contenu dans les feeds ; elle n'y écrit jamais. `url_enc` : chaîne de
+-- connexion chiffrée (voir db/secretbox.ts).
+
+CREATE TABLE IF NOT EXISTS data_source (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  url_enc    TEXT NOT NULL,
+  engine     TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS external_subscription (
+  id             TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  data_source_id INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
+  provider       TEXT NOT NULL,
+  source_url     TEXT NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, data_source_id, source_url)
+);
+
 -- ─── Flux requests (file d'approbation) ──────────────────────────────────────
 -- Renommée depuis `scrap_request`. Sur une base SQLite existante, renommer
 -- manuellement : ALTER TABLE scrap_request RENAME TO flux_request;

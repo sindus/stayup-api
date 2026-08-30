@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { listProviders } from '../db/providers.js'
-import { getStore } from '../db/store.js'
+import { listMergedProviders } from '../db/providers.js'
+import { getStore, openSecondaryStores } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -10,10 +10,15 @@ connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
 
 // GET /connectors/providers — liste légère des providers disponibles (nom +
-// libellé + mode d'approbation), pour construire une UI dynamique sans tirer
-// toutes les données.
+// libellé + mode d'approbation), fusionnée sur la base principale et toutes les
+// bases secondaires : une seule entrée par nom de provider.
 connectorsRoute.get('/providers', async (c) => {
-  const providers = await listProviders(await getStore(c.env.DATABASE_URL))
+  const primary = await getStore(c.env.DATABASE_URL)
+  const secondaries = await openSecondaryStores(primary, c.env.JWT_SECRET)
+  const providers = await listMergedProviders([
+    primary,
+    ...secondaries.map((s) => s.store),
+  ])
   return c.json({
     // `template` (manifeste d'affichage déclaré par le provider) n'est présent
     // que pour ceux qui en publient un ; les apps retombent sinon sur leur

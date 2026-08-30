@@ -574,6 +574,74 @@ export function runDataStoreConformance(
       })
     })
 
+    // ── Bases de données secondaires ──────────────────────────────────────
+
+    it('suit le cycle de vie d’une base secondaire', async () => {
+      const store = await harness.freshStore()
+
+      expect(await store.listDataSources()).toEqual([])
+      const { id } = await store.createDataSource({
+        name: 'Cluster A',
+        engine: 'postgres',
+        urlEnc: 'enc:v1:opaque',
+      })
+      expect(id).toBeGreaterThan(0)
+
+      expect(await store.listDataSources()).toMatchObject([
+        { id, name: 'Cluster A', engine: 'postgres', url_enc: 'enc:v1:opaque' },
+      ])
+      expect(await store.deleteDataSource(id)).toBe(true)
+      expect(await store.deleteDataSource(id)).toBe(false)
+      expect(await store.listDataSources()).toEqual([])
+    })
+
+    it('suit les abonnements à des flux de bases secondaires', async () => {
+      const store = await harness.freshStore()
+      const u = await newUser(store)
+      const { id: dsId } = await store.createDataSource({
+        name: 'A',
+        engine: 'postgres',
+        urlEnc: 'enc:v1:x',
+      })
+
+      expect(await store.listExternalSubscriptions(u.id)).toEqual([])
+
+      const sub = await store.subscribeExternal(
+        u.id,
+        dsId,
+        'rss',
+        'https://x.dev/feed',
+      )
+      expect(sub).toMatchObject({
+        data_source_id: dsId,
+        provider: 'rss',
+        source_url: 'https://x.dev/feed',
+      })
+      // Doublon (user, base, URL) → refusé.
+      expect(
+        await store.subscribeExternal(u.id, dsId, 'rss', 'https://x.dev/feed'),
+      ).toBeNull()
+
+      expect(await store.listExternalSubscriptions(u.id)).toEqual([
+        {
+          data_source_id: dsId,
+          provider: 'rss',
+          source_url: 'https://x.dev/feed',
+        },
+      ])
+      expect(
+        await store.unsubscribeExternal(u.id, dsId, 'https://x.dev/feed'),
+      ).toBe(true)
+      expect(
+        await store.unsubscribeExternal(u.id, dsId, 'https://x.dev/feed'),
+      ).toBe(false)
+
+      // Retirer la base retire ses abonnements en cascade.
+      await store.subscribeExternal(u.id, dsId, 'rss', 'https://y.dev/feed')
+      await store.deleteDataSource(dsId)
+      expect(await store.listExternalSubscriptions(u.id)).toEqual([])
+    })
+
     // ── Réglage d'approbation d'un provider ────────────────────────────────
 
     it('bascule le mode d’approbation d’un provider', async () => {

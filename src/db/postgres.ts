@@ -10,7 +10,9 @@ import type postgres from 'postgres'
 import type {
   AdminRow,
   ContentRow,
+  DataSourceRow,
   DataStore,
+  ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
   NewPendingUser,
@@ -489,6 +491,98 @@ export class PostgresStore implements DataStore {
       if ((err as { code?: string }).code === '42P01') return false
       throw err
     }
+  }
+
+  // ── Bases de données secondaires ─────────────────────────────────────────
+
+  /** Workers n'applique jamais schema.sql : les tables naissent au premier usage. */
+  private async ensureMultiDbTables(): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS data_source (
+           id SERIAL PRIMARY KEY, name TEXT NOT NULL, url_enc TEXT NOT NULL,
+           engine TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+         CREATE TABLE IF NOT EXISTS external_subscription (
+           id TEXT PRIMARY KEY,
+           user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+           data_source_id INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
+           provider TEXT NOT NULL, source_url TEXT NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           UNIQUE (user_id, data_source_id, source_url))`,
+      )
+      .catch(() => {})
+  }
+
+  async listDataSources(): Promise<DataSourceRow[]> {
+    await this.ensureMultiDbTables()
+    return this.sql<DataSourceRow[]>`
+      SELECT id, name, engine, url_enc, created_at FROM data_source ORDER BY id
+    `
+  }
+
+  async createDataSource(input: {
+    name: string
+    engine: string
+    urlEnc: string
+  }): Promise<{ id: number }> {
+    await this.ensureMultiDbTables()
+    const [row] = await this.sql<{ id: number }[]>`
+      INSERT INTO data_source (name, engine, url_enc)
+      VALUES (${input.name}, ${input.engine}, ${input.urlEnc})
+      RETURNING id
+    `
+    return { id: row.id }
+  }
+
+  async deleteDataSource(id: number): Promise<boolean> {
+    await this.ensureMultiDbTables()
+    const rows = await this.sql<{ id: number }[]>`
+      DELETE FROM data_source WHERE id = ${id} RETURNING id
+    `
+    return rows.length > 0
+  }
+
+  async listExternalSubscriptions(
+    userId: string,
+  ): Promise<ExternalSubscriptionRow[]> {
+    await this.ensureMultiDbTables()
+    return this.sql<ExternalSubscriptionRow[]>`
+      SELECT data_source_id, provider, source_url
+      FROM external_subscription WHERE user_id = ${userId}
+    `
+  }
+
+  async subscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    provider: string,
+    url: string,
+  ): Promise<ExternalSubscriptionRow | null> {
+    await this.ensureMultiDbTables()
+    try {
+      await this.sql`
+        INSERT INTO external_subscription (id, user_id, data_source_id, provider, source_url)
+        VALUES (${crypto.randomUUID()}, ${userId}, ${dataSourceId}, ${provider}, ${url})
+      `
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') return null
+      throw err
+    }
+    return { data_source_id: dataSourceId, provider, source_url: url }
+  }
+
+  async unsubscribeExternal(
+    userId: string,
+    dataSourceId: number,
+    url: string,
+  ): Promise<boolean> {
+    await this.ensureMultiDbTables()
+    const rows = await this.sql<{ id: string }[]>`
+      DELETE FROM external_subscription
+      WHERE user_id = ${userId} AND data_source_id = ${dataSourceId} AND source_url = ${url}
+      RETURNING id
+    `
+    return rows.length > 0
   }
 
   async findCredentialByEmail(email: string) {
