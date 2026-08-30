@@ -10,8 +10,9 @@ export type Bindings = {
    *  'approval' : le compte reste en attente jusqu'à validation d'un admin. */
   REGISTRATION_MODE: string
   /** Nom lisible de l'instance, exposé par GET /auth/config. Les apps s'en
-   *  servent comme libellé par défaut d'une instance ajoutée. Optionnel. */
-  INSTANCE_NAME: string
+   *  servent comme libellé par défaut d'une instance ajoutée. Optionnel :
+   *  absent sur Workers si le secret n'est pas posé. */
+  INSTANCE_NAME?: string
 }
 
 /** Mode d'inscription effectif : tout ce qui n'est pas 'approval' vaut 'open'. */
