@@ -14,10 +14,18 @@ describe('GET /auth/config', () => {
     const { status, body } = await config(TEST_ENV)
     expect(status).toBe(200)
     expect(body).toEqual({
+      name: null,
       registrationMode: 'open',
       emailPassword: true,
       oauth: { google: true, github: true },
     })
+  })
+
+  it('exposes INSTANCE_NAME when set, null otherwise', async () => {
+    const { body } = await config({ ...TEST_ENV, INSTANCE_NAME: 'Acme feeds' })
+    expect(body.name).toBe('Acme feeds')
+    const { body: unset } = await config(TEST_ENV)
+    expect(unset.name).toBeNull()
   })
 
   it('reports approval mode when REGISTRATION_MODE=approval', async () => {

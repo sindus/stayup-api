@@ -124,6 +124,7 @@ export const openApiSpec = {
         summary: 'Configuration publique de l’authentification',
         description:
           'Ce qu’un client doit savoir avant d’afficher l’écran de connexion : ' +
+          'nom lisible de l’instance (`INSTANCE_NAME`, `null` si non défini), ' +
           'mode d’inscription (`open` | `approval`) et méthodes de login disponibles.',
         tags: ['Authentification'],
         responses: {
@@ -134,6 +135,7 @@ export const openApiSpec = {
                 schema: {
                   type: 'object',
                   properties: {
+                    name: { type: 'string', nullable: true },
                     registrationMode: {
                       type: 'string',
                       enum: ['open', 'approval'],
@@ -205,8 +207,15 @@ export const openApiSpec = {
     '/auth/oauth/google': {
       get: {
         summary: 'Initier le flux OAuth Google',
-        description: 'Génère un state JWT et redirige vers Google OAuth.',
+        description:
+          'Génère un state JWT et redirige vers Google OAuth. `redirect_uri` ' +
+          '(deep link mobile) et `client_state` (valeur opaque renvoyée telle ' +
+          'quelle en `&state=` sur le callback) sont optionnels.',
         tags: ['Authentification'],
+        parameters: [
+          { name: 'redirect_uri', in: 'query', schema: { type: 'string' } },
+          { name: 'client_state', in: 'query', schema: { type: 'string' } },
+        ],
         responses: {
           302: { description: 'Redirection vers Google' },
         },
@@ -243,8 +252,14 @@ export const openApiSpec = {
     '/auth/oauth/github': {
       get: {
         summary: 'Initier le flux OAuth GitHub',
-        description: 'Génère un state JWT et redirige vers GitHub OAuth.',
+        description:
+          'Génère un state JWT et redirige vers GitHub OAuth. `redirect_uri` ' +
+          'et `client_state` (renvoyé en `&state=` sur le callback) sont optionnels.',
         tags: ['Authentification'],
+        parameters: [
+          { name: 'redirect_uri', in: 'query', schema: { type: 'string' } },
+          { name: 'client_state', in: 'query', schema: { type: 'string' } },
+        ],
         responses: {
           302: { description: 'Redirection vers GitHub' },
         },

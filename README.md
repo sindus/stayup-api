@@ -55,6 +55,7 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | — | Google OAuth (optional) |
 | `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
 | `REGISTRATION_MODE` | `open` | `open`: sign-ups activate immediately. `approval`: sign-ups queue for an admin — see [Registration modes](#registration-modes) |
+| `INSTANCE_NAME` | — | Human-readable name for this instance, exposed by `GET /auth/config`. Apps use it as the default label when a user adds this instance as a secondary API |
 
 On Cloudflare Workers these are set with `wrangler secret put <NAME>`.
 
@@ -137,7 +138,9 @@ Further admins are then created from `stayup-ui`'s admin area (super admin only)
 
 OAuth sign-up automatically links the account to an existing user when the email address matches. Callbacks accept a `redirect_uri` using the `stayup://` or `exp://` scheme for mobile deep links; any other scheme is ignored in favour of `UI_URL`.
 
-`GET /auth/config` (public) reports what a client needs before showing a login screen: the registration mode and which login methods this instance offers (`{ registrationMode, emailPassword, oauth: { google, github } }`).
+`GET /auth/config` (public) reports what a client needs before showing a login screen: the instance name, the registration mode and which login methods this instance offers (`{ name, registrationMode, emailPassword, oauth: { google, github } }`). `name` is `INSTANCE_NAME` or `null`.
+
+The OAuth start routes (`GET /auth/oauth/:provider`) accept an optional opaque `client_state` query param, echoed back unchanged as `&state=` on the callback redirect — an app that holds several instances uses it to route the returned token to the instance that began the flow.
 
 ### Registration modes
 

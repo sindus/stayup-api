@@ -11,12 +11,17 @@ export const oauthRoute = new Hono<{ Bindings: Bindings }>()
 
 oauthRoute.get('/oauth/google', async (c) => {
   const mobileRedirectUri = c.req.query('redirect_uri') ?? null
+  // Valeur opaque choisie par le client : renvoyée telle quelle après OAuth
+  // (`&state=`), pour qu'une app multi-instance rattache le token à l'instance
+  // qui a lancé le flux. Scellée dans le state signé, donc non falsifiable.
+  const clientState = c.req.query('client_state') ?? null
 
   const state = await sign(
     {
       provider: 'google',
       exp: Math.floor(Date.now() / 1000) + 300,
       ...(mobileRedirectUri ? { redirect_uri: mobileRedirectUri } : {}),
+      ...(clientState ? { client_state: clientState } : {}),
     },
     c.env.JWT_SECRET,
     'HS256',
@@ -38,10 +43,11 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
 
   if (!code || !state) return c.json({ error: 'Missing code or state' }, 400)
 
-  let statePayload: { redirect_uri?: string }
+  let statePayload: { redirect_uri?: string; client_state?: string }
   try {
     statePayload = (await verify(state, c.env.JWT_SECRET, 'HS256')) as {
       redirect_uri?: string
+      client_state?: string
     }
   } catch {
     return c.json({ error: 'Invalid state' }, 400)
@@ -90,7 +96,12 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
   )
 
   return c.redirect(
-    oauthCallbackRedirect(c.env, statePayload.redirect_uri, result),
+    oauthCallbackRedirect(
+      c.env,
+      statePayload.redirect_uri,
+      result,
+      statePayload.client_state,
+    ),
   )
 })
 
@@ -98,12 +109,14 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
 
 oauthRoute.get('/oauth/github', async (c) => {
   const mobileRedirectUri = c.req.query('redirect_uri') ?? null
+  const clientState = c.req.query('client_state') ?? null
 
   const state = await sign(
     {
       provider: 'github',
       exp: Math.floor(Date.now() / 1000) + 300,
       ...(mobileRedirectUri ? { redirect_uri: mobileRedirectUri } : {}),
+      ...(clientState ? { client_state: clientState } : {}),
     },
     c.env.JWT_SECRET,
     'HS256',
@@ -124,10 +137,11 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
 
   if (!code || !state) return c.json({ error: 'Missing code or state' }, 400)
 
-  let statePayload: { redirect_uri?: string }
+  let statePayload: { redirect_uri?: string; client_state?: string }
   try {
     statePayload = (await verify(state, c.env.JWT_SECRET, 'HS256')) as {
       redirect_uri?: string
+      client_state?: string
     }
   } catch {
     return c.json({ error: 'Invalid state' }, 400)
@@ -203,25 +217,34 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
   )
 
   return c.redirect(
-    oauthCallbackRedirect(c.env, statePayload.redirect_uri, result),
+    oauthCallbackRedirect(
+      c.env,
+      statePayload.redirect_uri,
+      result,
+      statePayload.client_state,
+    ),
   )
 })
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
 /** Construit l'URL de retour après OAuth : `?token=` en succès, ou
- *  `?error=pending_approval` si le compte attend une validation admin. */
+ *  `?error=pending_approval` si le compte attend une validation admin. Si le
+ *  client a fourni un `client_state`, il est renvoyé tel quel en `&state=`. */
 function oauthCallbackRedirect(
   env: Bindings,
   redirectUri: string | undefined,
   result: { token: string } | { pending: true },
+  clientState?: string,
 ): string {
   const base = isMobileRedirectUri(redirectUri)
     ? redirectUri
     : `${env.UI_URL}/api/auth/callback`
-  const query =
-    'pending' in result ? 'error=pending_approval' : `token=${result.token}`
-  return `${base}?${query}`
+  const parts = [
+    'pending' in result ? 'error=pending_approval' : `token=${result.token}`,
+  ]
+  if (clientState) parts.push(`state=${encodeURIComponent(clientState)}`)
+  return `${base}?${parts.join('&')}`
 }
 
 // L'URI de retour est fournie par l'appelant *avant* la signature du state : la

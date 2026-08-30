@@ -19,12 +19,14 @@ function failedResponse(): Response {
 async function signedState(
   provider: 'google' | 'github',
   redirectUri?: string,
+  clientState?: string,
 ) {
   return sign(
     {
       provider,
       exp: Math.floor(Date.now() / 1000) + 300,
       ...(redirectUri ? { redirect_uri: redirectUri } : {}),
+      ...(clientState ? { client_state: clientState } : {}),
     },
     TEST_ENV.JWT_SECRET,
     'HS256',
@@ -89,6 +91,17 @@ describe('GET /auth/oauth/google', () => {
     const location = new URL(res.headers.get('location') as string)
     const state = decodeJwt(location.searchParams.get('state') as string)
     expect(state.redirect_uri).toBe('stayup://auth')
+  })
+
+  it('seals an opaque client_state into the signed state when provided', async () => {
+    const res = await app.request(
+      '/auth/oauth/google?client_state=inst-abc',
+      {},
+      TEST_ENV,
+    )
+    const location = new URL(res.headers.get('location') as string)
+    const state = decodeJwt(location.searchParams.get('state') as string)
+    expect(state.client_state).toBe('inst-abc')
   })
 })
 
@@ -197,6 +210,26 @@ describe('GET /auth/oauth/google/callback', () => {
 
     const location = res.headers.get('location') as string
     expect(location.startsWith('stayup://auth/callback?token=')).toBe(true)
+  })
+
+  it('echoes the client_state back as &state= on the callback redirect', async () => {
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ access_token: 'at' }))
+      .mockResolvedValueOnce(
+        okResponse({ id: 'g-1', email: 'alice@example.com', name: 'Alice' }),
+      )
+    mockSql(NEW_USER_DB)
+    const state = await signedState('google', undefined, 'inst-abc')
+
+    const res = await app.request(
+      `/auth/oauth/google/callback?code=abc&state=${state}`,
+      {},
+      TEST_ENV,
+    )
+
+    const location = new URL(res.headers.get('location') as string)
+    expect(location.searchParams.get('state')).toBe('inst-abc')
+    expect(location.searchParams.get('token')).not.toBeNull()
   })
 
   it('ignores a redirect_uri that is not a known mobile scheme', async () => {

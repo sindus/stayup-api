@@ -14,6 +14,9 @@ export const authRoute = new Hono<{ Bindings: Bindings }>()
 // à quelle API se connecter.
 authRoute.get('/config', (c) => {
   return c.json({
+    // Libellé lisible de l'instance (INSTANCE_NAME). `null` si non défini : les
+    // apps retombent alors sur l'hôte de l'URL.
+    name: c.env.INSTANCE_NAME || null,
     registrationMode: registrationMode(c.env),
     emailPassword: true,
     oauth: {
