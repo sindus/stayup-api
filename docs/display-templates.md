@@ -367,6 +367,13 @@ dans « choisir un flux existant » et partout où un flux est listé.
 "feedLabel": { "path": "$source.url", "format": "hostname" }  // → "css-tricks.com"
 "feedLabel": { "path": "$source.url", "format": "domain" }    // → "blog.stephane-robert"
 "feedLabel": { "path": "$source.config.since" }               // → "daily"
+
+// Une liste d'accesseurs = le premier non-vide gagne. Utile quand le
+// collecteur enregistre un vrai nom dans `config` mais ne l'a pas toujours :
+"feedLabel": [
+  { "path": "$source.config.title" },                  // le <title> du flux si connu
+  { "path": "$source.url", "format": "domain" }         // sinon, le domaine
+]
 ```
 
 Sans `feedLabel` (ou provider sans template) : **repli sur l'URL, schéma et `www.` retirés**.
