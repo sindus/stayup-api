@@ -764,10 +764,29 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
     expect(res.status).toBe(404)
   })
 
-  it('only removes the subscription for a curated (manual) provider, never the repository', async () => {
+  // Retirer un flux de sa liste ne fait QUE désabonner : jamais de suppression
+  // de la source `repository` ni de son contenu `connector_*` (régression :
+  // purger sur "dernier abonné parti" effaçait des données du collecteur).
+  it('a regular user leaving an auto provider only unsubscribes', async () => {
     const sql = mockSql([
-      [{ repository_id: 5, type: 'scrap' }], // SELECT link
-      [{ name: 'scrap', flux_approval: 'manual' }], // readRegistry
+      [{ repository_id: 5, type: 'rss' }], // findSubscription
+      [], // DELETE user_repository
+    ])
+    const res = await app.request(
+      '/ui/users/1/repositories/link-1',
+      { method: 'DELETE', headers: await selfToken('1') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    // findSubscription + DELETE user_repository, rien d'autre : ni readRegistry,
+    // ni countSubscribers, ni DELETE connector_*, ni DELETE repository.
+    expect(sql).toHaveBeenCalledTimes(2)
+    expect(sql.unsafe).not.toHaveBeenCalled()
+  })
+
+  it('an admin removing a flux from their own list also only unsubscribes', async () => {
+    const sql = mockSql([
+      [{ repository_id: 5, type: 'rss' }], // findSubscription
       [], // DELETE user_repository
     ])
     const res = await app.request(
@@ -776,19 +795,14 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(200)
-    // SELECT link + readRegistry + DELETE user_repository, et rien d'autre
-    expect(sql).toHaveBeenCalledTimes(3)
+    expect(sql).toHaveBeenCalledTimes(2)
     expect(sql.unsafe).not.toHaveBeenCalled()
   })
 
-  it('purges the repository for an admin on an auto provider', async () => {
+  it('a curated (manual) provider is no different — unsubscribe only', async () => {
     const sql = mockSql([
-      [{ repository_id: 5, type: 'rss' }], // SELECT link
-      [], // readRegistry → rss absent → auto
-      [{ table_name: 'connector_rss' }], // getTableForProvider
-      [], // sql.unsafe : DELETE connector_rss
+      [{ repository_id: 5, type: 'scrap' }], // findSubscription
       [], // DELETE user_repository
-      [], // DELETE repository
     ])
     const res = await app.request(
       '/ui/users/1/repositories/link-1',
@@ -796,44 +810,8 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(200)
-    expect(sql.unsafe).toHaveBeenCalledTimes(1)
-  })
-
-  it('purges the repository when the last subscriber leaves', async () => {
-    const sql = mockSql([
-      [{ repository_id: 5, type: 'rss' }], // SELECT link
-      [], // readRegistry → auto
-      [], // DELETE user_repository
-      [{ count: '0' }], // plus aucun abonné
-      [{ table_name: 'connector_rss' }], // getTableForProvider
-      [], // sql.unsafe : DELETE connector_rss
-      [], // DELETE user_repository
-      [], // DELETE repository
-    ])
-    const res = await app.request(
-      '/ui/users/1/repositories/link-1',
-      { method: 'DELETE', headers: await selfToken('1') },
-      TEST_ENV,
-    )
-    expect(res.status).toBe(200)
-    expect(sql.unsafe).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the repository when other subscribers remain', async () => {
-    const sql = mockSql([
-      [{ repository_id: 5, type: 'rss' }], // SELECT link
-      [], // readRegistry → auto
-      [], // DELETE user_repository
-      [{ count: '2' }], // il reste des abonnés
-    ])
-    const res = await app.request(
-      '/ui/users/1/repositories/link-1',
-      { method: 'DELETE', headers: await selfToken('1') },
-      TEST_ENV,
-    )
-    expect(res.status).toBe(200)
+    expect(sql).toHaveBeenCalledTimes(2)
     expect(sql.unsafe).not.toHaveBeenCalled()
-    expect(sql).toHaveBeenCalledTimes(4)
   })
 })
 

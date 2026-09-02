@@ -420,16 +420,6 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   )
 })
 
-async function purgeRepository(
-  store: DataStore,
-  repositoryId: number,
-  type: string,
-): Promise<void> {
-  await store.deleteContentForSource(type, repositoryId)
-  await store.deleteSubscriptionsForSource(repositoryId)
-  await store.deleteSource(repositoryId)
-}
-
 // DELETE /ui/users/:userId/repositories/:linkId
 uiUsersRoute.delete(
   '/:userId/repositories/:linkId',
@@ -457,25 +447,14 @@ uiUsersRoute.delete(
 
     if (!link) return c.json({ error: 'Feed not found' }, 404)
 
-    const payload = c.get('jwtPayload') as { role?: string }
-    const isAdmin = payload?.role === 'admin'
-
-    // Les flux d'un provider en mode `manual` sont curés : ils ont d'autres
-    // abonnés et une gestion admin dédiée — ici on se contente de désabonner,
-    // jamais de purger la source (même pour un admin).
-    const [meta] = await store.readRegistry([link.type])
-    const curated = meta?.flux_approval === 'manual'
-
-    if (curated) {
-      await store.unsubscribeById(linkId)
-    } else if (isAdmin) {
-      await purgeRepository(store, link.repository_id, link.type)
-    } else {
-      await store.unsubscribeById(linkId)
-      if ((await store.countSubscribers(link.repository_id)) === 0) {
-        await purgeRepository(store, link.repository_id, link.type)
-      }
-    }
+    // Retirer un flux de sa liste = se désabonner, rien de plus. La source
+    // `repository` et son contenu `connector_*` (produits par le collecteur) ne
+    // sont jamais supprimés ici : purger dès qu'une source n'a plus d'abonné
+    // détruisait de l'historique sur un état transitoire (retrait puis ré-ajout)
+    // et courait contre le collecteur qui écrit encore dedans. La suppression
+    // durable d'une source reste réservée aux endpoints admin
+    // `DELETE /ui/repositories/:id` et `/ui/repositories/:id/data`.
+    await store.unsubscribeById(linkId)
 
     return c.json({ success: true })
   },
