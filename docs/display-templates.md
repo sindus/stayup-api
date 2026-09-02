@@ -124,6 +124,7 @@ lui-même un accesseur.
 | `relativeTime` | même rendu que `datetime` pour l'instant |
 | `urlSlug` | `https://github.com/vercel/next.js/` → `vercel/next.js` (pathname sans `/` de bord) |
 | `hostname` | `https://www.css-tricks.com/x` → `css-tricks.com` |
+| `domain` | `https://blog.stephane-robert.info/rss.xml` → `blog.stephane-robert` (hostname sans `www.` ni le dernier segment ; approximatif sur les TLD composés type `.co.uk`) |
 | `stripMarkdown` | retire `#`, `**…**`, `` `…` `` |
 | `upper` / `lower` | casse |
 
@@ -358,11 +359,13 @@ Absent ou non résolu → `dot`. Le SVG-string complet n'est **pas** accepté (s
 ### 7.2 `display.feedLabel` — le libellé court d'un flux
 
 Accesseur évalué **contre `$source`** (la `repository` : `url`, `config`, `type`),
-`$row` étant vide. Il donne l'étiquette d'un flux dans la sidebar.
+`$row` étant vide. Il donne l'étiquette d'un flux — la même dans la sidebar,
+dans « choisir un flux existant » et partout où un flux est listé.
 
 ```jsonc
 "feedLabel": { "path": "$source.url", "format": "urlSlug" }   // → "vercel/next.js"
 "feedLabel": { "path": "$source.url", "format": "hostname" }  // → "css-tricks.com"
+"feedLabel": { "path": "$source.url", "format": "domain" }    // → "blog.stephane-robert"
 "feedLabel": { "path": "$source.config.since" }               // → "daily"
 ```
 
