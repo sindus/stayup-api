@@ -46,6 +46,46 @@ BEGIN
   END IF;
 END $$;
 
+-- ─── Contenu collecté par les providers ──────────────────────────────────────
+-- Une seule table pour tous les providers (colonne `provider` discriminante),
+-- à la place d'une table `connector_<name>` par provider. `content` reste une
+-- chaîne opaque : sa forme appartient au provider, l'API ne l'interprète pas
+-- (voir db/port.ts). `params` ne sert aujourd'hui qu'à `scrap`.
+
+CREATE TABLE IF NOT EXISTS connector_item (
+  id            SERIAL PRIMARY KEY,
+  provider      TEXT NOT NULL,
+  repository_id INTEGER NOT NULL REFERENCES repository(id),
+  version       TEXT,
+  content       TEXT NOT NULL,
+  params        JSONB,
+  datetime      TIMESTAMPTZ,
+  executed_at   TIMESTAMPTZ NOT NULL,
+  success       BOOLEAN NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS connector_item_provider_repo_idx
+  ON connector_item (provider, repository_id, executed_at DESC);
+
+-- ─── Clés d'API des connectors ────────────────────────────────────────────────
+-- Un connector n'a plus d'accès direct à la base : il s'authentifie auprès de
+-- l'API avec une clé, scopée à un seul `provider` (voir middleware/auth.ts).
+-- `key_hash` est un SHA-256 de la clé — pas bcrypt : c'est un secret déjà à
+-- haute entropie généré côté serveur, pas un mot de passe humain à ralentir
+-- volontairement. `key_prefix` (8 premiers caractères) permet d'identifier une
+-- clé dans l'interface admin sans jamais réafficher le secret complet.
+
+CREATE TABLE IF NOT EXISTS connector_key (
+  id           TEXT PRIMARY KEY,
+  provider     TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  key_hash     TEXT NOT NULL UNIQUE,
+  key_prefix   TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  revoked_at   TIMESTAMPTZ
+);
+
 -- ─── Auth (Better Auth — managed by stayup-ui) ────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS "user" (

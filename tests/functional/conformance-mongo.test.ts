@@ -19,11 +19,6 @@ afterAll(async () => {
   await client.close()
 })
 
-/** MongoStore garde sa base pour lui ; le harnais a besoin d'y semer des données. */
-function dbOf(store: DataStore) {
-  return (store as unknown as { db: ReturnType<MongoClient['db']> }).db
-}
-
 runDataStoreConformance('MongoDB', {
   async freshStore(): Promise<DataStore> {
     const name = `conformance_${++counter}`
@@ -34,38 +29,31 @@ runDataStoreConformance('MongoDB', {
     return new MongoStore(db)
   },
 
+  // Le contenu vit dans la collection unique `connector_item` : c'est le
+  // contrat `DataStore` lui-même (registerProvider/insertContentItems) qui
+  // sait l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi.
   async seedProvider(store, provider, rows) {
-    const db = dbOf(store)
-    // C'est le provider qui crée son espace de stockage, pas l'API. En Mongo,
-    // une collection n'existe qu'une fois créée : sans ça, un provider sans
-    // contenu resterait invisible, alors qu'il est bel et bien installé.
-    await db.createCollection(`connector_${provider}`)
-    if (rows.length === 0) return
-    await db.collection(`connector_${provider}`).insertMany(
+    await store.registerProvider({ name: provider, displayName: provider })
+    await store.insertContentItems(
+      provider,
       rows.map((row) => ({
-        repository_id: row.repository_id,
+        repositoryId: row.repository_id,
         content: row.content,
         datetime: row.datetime ?? null,
-        executed_at: row.executed_at,
+        executedAt: row.executed_at,
         success: true,
       })),
     )
   },
 
   async seedRegistry(store, entries) {
-    const db = dbOf(store)
     for (const e of entries) {
-      await db.collection('provider_registry').updateOne(
-        { _id: e.name as never },
-        {
-          $set: {
-            display_name: e.display_name,
-            sort_order: e.sort_order,
-            template: e.template ?? null,
-          },
-        },
-        { upsert: true },
-      )
+      await store.registerProvider({
+        name: e.name,
+        displayName: e.display_name,
+        sortOrder: e.sort_order,
+        template: e.template,
+      })
     }
   },
 })

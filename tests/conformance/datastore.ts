@@ -72,15 +72,13 @@ export function runDataStoreConformance(
       expect(await store.providerExists('podcast')).toBe(true)
     })
 
-    it('tolère un registre absent et ne renvoie rien', async () => {
+    it('ne renvoie rien pour un provider jamais enregistré', async () => {
       const store = await harness.freshStore()
-      await harness.seedProvider(store, 'podcast', [])
       expect(await store.readRegistry(['podcast'])).toEqual([])
     })
 
     it('rend les noms affichés déclarés', async () => {
       const store = await harness.freshStore()
-      await harness.seedProvider(store, 'podcast', [])
       await harness.seedRegistry(store, [
         { name: 'podcast', display_name: 'Podcasts', sort_order: 10 },
       ])
@@ -97,7 +95,6 @@ export function runDataStoreConformance(
 
     it("relaie tel quel le manifeste d'affichage déclaré par le provider", async () => {
       const store = await harness.freshStore()
-      await harness.seedProvider(store, 'podcast', [])
       const template = {
         version: 1,
         list: { layout: 'row', primary: 'title' },
@@ -120,7 +117,6 @@ export function runDataStoreConformance(
 
     it('omet la clé template quand le provider n’en déclare pas', async () => {
       const store = await harness.freshStore()
-      await harness.seedProvider(store, 'podcast', [])
       await harness.seedRegistry(store, [
         { name: 'podcast', display_name: 'Podcasts', sort_order: 10 },
       ])
@@ -269,6 +265,203 @@ export function runDataStoreConformance(
       await expect(
         store.deleteContentForSource('inexistant', 1),
       ).resolves.toBeUndefined()
+    })
+
+    // ── Contenu collecté (écriture, réservée aux connectors) ────────────────
+
+    it('écrit un lot de lignes en une fois', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://batch.dev',
+        type: 'podcast',
+        config: {},
+      })
+
+      await store.insertContentItems('podcast', [
+        {
+          repositoryId: s.id,
+          version: 'v1',
+          content: 'un',
+          executedAt: '2026-01-01T00:00:00Z',
+          success: true,
+        },
+        {
+          repositoryId: s.id,
+          version: 'v2',
+          content: 'deux',
+          params: { retries: 1 },
+          executedAt: '2026-01-02T00:00:00Z',
+          success: true,
+        },
+      ])
+
+      const rows = await store.allContent('podcast')
+      expect(rows.map((r) => r.content)).toEqual(['un', 'deux'])
+      // Un lot vide ne doit rien écrire ni échouer.
+      await expect(
+        store.insertContentItems('podcast', []),
+      ).resolves.toBeUndefined()
+      expect(await store.allContent('podcast')).toHaveLength(2)
+    })
+
+    it('retrouve la dernière version réussie, ignore les échecs', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://version.dev',
+        type: 'podcast',
+        config: {},
+      })
+
+      expect(await store.getLastKnownVersion('podcast', s.id)).toBeNull()
+
+      await store.insertContentItems('podcast', [
+        {
+          repositoryId: s.id,
+          version: 'v1',
+          content: 'un',
+          executedAt: '2026-01-01T00:00:00Z',
+          success: true,
+        },
+        {
+          repositoryId: s.id,
+          version: 'v2-failed',
+          content: '',
+          executedAt: '2026-01-03T00:00:00Z',
+          success: false,
+        },
+        {
+          repositoryId: s.id,
+          version: 'v1.1',
+          content: 'plus récent',
+          executedAt: '2026-01-02T00:00:00Z',
+          success: true,
+        },
+      ])
+
+      // La plus récente RÉUSSIE, pas la plus récente tout court.
+      expect(await store.getLastKnownVersion('podcast', s.id)).toBe('v1.1')
+    })
+
+    it('liste les sources suivies par un provider, sans état d’abonnement', async () => {
+      const store = await harness.freshStore()
+      await store.createSource({
+        url: 'https://own.dev/a',
+        type: 'podcast',
+        config: { max_entries: 5 },
+      })
+      await store.createSource({
+        url: 'https://own.dev/b',
+        type: 'scrap',
+        config: {},
+      })
+
+      const rows = await store.listSourcesForProvider('podcast')
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({
+        url: 'https://own.dev/a',
+        type: 'podcast',
+        config: { max_entries: 5 },
+      })
+    })
+
+    it('consigne une erreur de collecte sans échouer', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://err.dev',
+        type: 'podcast',
+        config: {},
+      })
+      // Rien dans le contrat n'expose `log` en lecture : c'est une donnée
+      // opérationnelle, pas un objet du contrat. On vérifie juste qu'écrire
+      // (avec ou sans source connue) ne casse rien.
+      await expect(
+        store.logConnectorError(
+          'podcast',
+          s.id,
+          'boom',
+          '2026-01-01T00:00:00Z',
+        ),
+      ).resolves.toBeUndefined()
+      await expect(
+        store.logConnectorError(
+          'podcast',
+          null,
+          'boom global',
+          '2026-01-01T00:00:00Z',
+        ),
+      ).resolves.toBeUndefined()
+    })
+
+    it('enregistre un provider, idempotent, sans réécrire sortOrder', async () => {
+      const store = await harness.freshStore()
+      expect(await store.providerExists('podcast')).toBe(false)
+
+      await store.registerProvider({
+        name: 'podcast',
+        displayName: 'Podcasts',
+        sortOrder: 10,
+      })
+      expect(await store.providerExists('podcast')).toBe(true)
+      expect(await store.listProviderNames()).toEqual(['podcast'])
+
+      // Un second appel (redémarrage du connector) met à jour le nom affiché
+      // et le template, mais jamais sortOrder — un admin a pu le retoucher.
+      const template = { version: 1 }
+      await store.registerProvider({
+        name: 'podcast',
+        displayName: 'Podcasts 2',
+        sortOrder: 999,
+        template,
+      })
+
+      const [entry] = await store.readRegistry(['podcast'])
+      expect(entry).toMatchObject({
+        name: 'podcast',
+        display_name: 'Podcasts 2',
+        sort_order: 10,
+        template,
+      })
+    })
+
+    // ── Clés d'API des connectors ────────────────────────────────────────────
+
+    it('suit le cycle de vie d’une clé d’API de connector', async () => {
+      const store = await harness.freshStore()
+
+      expect(await store.listConnectorKeys()).toEqual([])
+
+      const { id } = await store.createConnectorKey({
+        provider: 'podcast',
+        name: 'prod',
+        keyHash: 'hash-1',
+        keyPrefix: 'abcd1234',
+      })
+
+      const keys = await store.listConnectorKeys()
+      expect(keys).toHaveLength(1)
+      expect(keys[0]).toMatchObject({
+        id,
+        provider: 'podcast',
+        name: 'prod',
+        key_prefix: 'abcd1234',
+        revoked_at: null,
+      })
+
+      expect(await store.findConnectorKeyByHash('hash-1')).toEqual({
+        id,
+        provider: 'podcast',
+      })
+      expect(await store.findConnectorKeyByHash('absent')).toBeNull()
+
+      await expect(store.touchConnectorKeyUsage(id)).resolves.toBeUndefined()
+      expect((await store.listConnectorKeys())[0].last_used_at).not.toBeNull()
+
+      expect(await store.revokeConnectorKey(id)).toBe(true)
+      // Révoquer deux fois ne réussit qu'une fois.
+      expect(await store.revokeConnectorKey(id)).toBe(false)
+      // Une clé révoquée n'authentifie plus rien.
+      expect(await store.findConnectorKeyByHash('hash-1')).toBeNull()
+      expect((await store.listConnectorKeys())[0].revoked_at).not.toBeNull()
     })
 
     // ── Sources ────────────────────────────────────────────────────────────

@@ -20,14 +20,11 @@ describe('GET /connectors/providers', () => {
   it('returns discovered providers enriched with their display name', async () => {
     const sql = createSqlMock()
     sql
-      .mockResolvedValueOnce([
-        { table_name: 'connector_changelog' },
-        { table_name: 'connector_youtube' },
-      ]) // getConnectorTables
+      .mockResolvedValueOnce([{ name: 'changelog' }, { name: 'youtube' }]) // listProviderNames: registeredNames
+      .mockResolvedValueOnce([]) // listProviderNames: namesWithContent
       .mockResolvedValueOnce([
         { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
-      ]) // provider_registry (pas de ligne pour 'changelog' → fallback)
-    sql.unsafe = vi.fn()
+      ]) // readRegistry (pas de ligne pour 'changelog' → fallback)
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -43,17 +40,12 @@ describe('GET /connectors/providers', () => {
     ])
   })
 
-  it('falls back to capitalized names when provider_registry is missing', async () => {
+  it('returns an empty list when provider_registry does not exist yet', async () => {
+    // Base neuve : aucun connector ne s'est encore jamais enregistré.
     const sql = createSqlMock()
-    sql
-      .mockResolvedValueOnce([
-        { table_name: 'connector_changelog' },
-        { table_name: 'connector_youtube' },
-      ]) // getConnectorTables
-      .mockRejectedValueOnce(
-        new Error('relation "provider_registry" does not exist'),
-      ) // base sur laquelle aucun collecteur à jour n'a encore tourné
-    sql.unsafe = vi.fn()
+    sql.mockRejectedValueOnce(
+      new Error('relation "provider_registry" does not exist'),
+    )
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -62,16 +54,12 @@ describe('GET /connectors/providers', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(200)
-    expect((await json(res)).providers).toEqual([
-      { name: 'changelog', displayName: 'Changelog', fluxApproval: 'auto' },
-      { name: 'youtube', displayName: 'Youtube', fluxApproval: 'auto' },
-    ])
+    expect((await json(res)).providers).toEqual([])
   })
 
-  it('returns an empty list when no connector table exists', async () => {
+  it('returns an empty list when no provider is registered', async () => {
     const sql = createSqlMock()
     sql.mockResolvedValueOnce([])
-    sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -92,10 +80,8 @@ describe('GET /connectors/providers', () => {
     }
     const sql = createSqlMock()
     sql
-      .mockResolvedValueOnce([
-        { table_name: 'connector_github_trending' },
-        { table_name: 'connector_youtube' },
-      ]) // getConnectorTables
+      .mockResolvedValueOnce([{ name: 'github_trending' }, { name: 'youtube' }]) // listProviderNames: registeredNames
+      .mockResolvedValueOnce([]) // listProviderNames: namesWithContent
       .mockResolvedValueOnce([
         {
           name: 'github_trending',
@@ -105,8 +91,7 @@ describe('GET /connectors/providers', () => {
         },
         // youtube : pas de template déclaré → clé absente de la réponse
         { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
-      ]) // provider_registry
-    sql.unsafe = vi.fn()
+      ]) // readRegistry
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -138,17 +123,15 @@ describe('GET /connectors (auth)', () => {
 describe('GET /connectors', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('returns all connector tables data', async () => {
-    const sql = createSqlMock()
-    sql.unsafe = vi
-      .fn()
-      .mockResolvedValueOnce([{ id: 1, content: 'changelog entry' }])
-      .mockResolvedValueOnce([{ id: 2, content: 'youtube video' }])
-    sql.mockResolvedValueOnce([
-      { table_name: 'connector_changelog' },
-      { table_name: 'connector_youtube' },
+  it('returns all providers content, keyed by provider', async () => {
+    // listProviderNames (registeredNames, namesWithContent) ;
+    // allContent(changelog) ; allContent(youtube)
+    mockSql([
+      [{ name: 'changelog' }, { name: 'youtube' }],
+      [],
+      [{ id: 1, content: 'changelog entry' }],
+      [{ id: 2, content: 'youtube video' }],
     ])
-    vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
       '/connectors',
@@ -162,11 +145,8 @@ describe('GET /connectors', () => {
     expect(body.connectors).toHaveProperty('youtube')
   })
 
-  it('returns empty object when no connector tables exist', async () => {
-    const sql = createSqlMock()
-    sql.mockResolvedValueOnce([])
-    sql.unsafe = vi.fn()
-    vi.mocked(getSql).mockReturnValue(sql as never)
+  it('returns an empty object when no provider is registered', async () => {
+    mockSql([[]])
 
     const res = await app.request(
       '/connectors',
@@ -181,10 +161,7 @@ describe('GET /connectors', () => {
 
 describe('GET /connectors/latest (auth)', () => {
   it('returns 403 for non-admin user', async () => {
-    const sql = createSqlMock()
-    sql.mockResolvedValue([])
-    sql.unsafe = vi.fn()
-    vi.mocked(getSql).mockReturnValue(sql as never)
+    mockSql([[]])
 
     const res = await app.request(
       '/connectors/latest',
@@ -198,30 +175,15 @@ describe('GET /connectors/latest (auth)', () => {
 describe('GET /connectors/latest', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('returns latest entry per provider_id for all connectors', async () => {
-    const sql = createSqlMock()
-    sql
-      .mockResolvedValueOnce([
-        { table_name: 'connector_changelog' },
-        { table_name: 'connector_youtube' },
-      ])
-      .mockResolvedValueOnce([
-        { column_name: 'provider_id' },
-        { column_name: 'executed_at' },
-      ]) // getTableColumns: connector_changelog
-      .mockResolvedValueOnce([
-        { column_name: 'provider_id' },
-        { column_name: 'executed_at' },
-      ]) // getTableColumns: connector_youtube
-    sql.unsafe = vi
-      .fn()
-      .mockResolvedValueOnce([
-        { id: 2, provider_id: 1, content: 'latest changelog' },
-      ])
-      .mockResolvedValueOnce([
-        { id: 4, provider_id: 1, content: 'latest video' },
-      ])
-    vi.mocked(getSql).mockReturnValue(sql as never)
+  it('returns the latest entry per repository_id for all providers', async () => {
+    // listProviderNames (registeredNames, namesWithContent) ;
+    // latestPerSource(changelog) ; latestPerSource(youtube)
+    mockSql([
+      [{ name: 'changelog' }, { name: 'youtube' }],
+      [],
+      [{ id: 2, repository_id: 1, content: 'latest changelog' }],
+      [{ id: 4, repository_id: 1, content: 'latest video' }],
+    ])
 
     const res = await app.request(
       '/connectors/latest',
@@ -231,10 +193,10 @@ describe('GET /connectors/latest', () => {
     expect(res.status).toBe(200)
     const body = await json(res)
     expect(body.latest.changelog).toEqual([
-      { id: 2, provider_id: 1, content: 'latest changelog' },
+      { id: 2, repository_id: 1, content: 'latest changelog' },
     ])
     expect(body.latest.youtube).toEqual([
-      { id: 4, provider_id: 1, content: 'latest video' },
+      { id: 4, repository_id: 1, content: 'latest video' },
     ])
   })
 })
@@ -242,18 +204,12 @@ describe('GET /connectors/latest', () => {
 describe('GET /connectors/:name', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('returns latest per provider_id for a specific connector', async () => {
-    const sql = createSqlMock()
-    sql
-      .mockResolvedValueOnce([{ table_name: 'connector_changelog' }]) // exists check
-      .mockResolvedValueOnce([
-        { column_name: 'provider_id' },
-        { column_name: 'executed_at' },
-      ]) // getTableColumns
-    sql.unsafe = vi
-      .fn()
-      .mockResolvedValueOnce([{ id: 2, provider_id: 1, content: 'latest' }])
-    vi.mocked(getSql).mockReturnValue(sql as never)
+  it('returns the latest entry per source for a specific provider', async () => {
+    // providerExists ; latestPerSource
+    mockSql([
+      [{ name: 'changelog' }],
+      [{ id: 2, repository_id: 1, content: 'latest' }],
+    ])
 
     const res = await app.request(
       '/connectors/changelog',
@@ -263,14 +219,11 @@ describe('GET /connectors/:name', () => {
     expect(res.status).toBe(200)
     const body = await json(res)
     expect(body.connector).toBe('changelog')
-    expect(body.data).toEqual([{ id: 2, provider_id: 1, content: 'latest' }])
+    expect(body.data).toEqual([{ id: 2, repository_id: 1, content: 'latest' }])
   })
 
-  it('returns 404 for unknown connector', async () => {
-    const sql = createSqlMock()
-    sql.mockResolvedValueOnce([])
-    sql.unsafe = vi.fn()
-    vi.mocked(getSql).mockReturnValue(sql as never)
+  it('returns 404 for an unregistered provider', async () => {
+    mockSql([[]]) // providerExists → false
 
     const res = await app.request(
       '/connectors/unknown',

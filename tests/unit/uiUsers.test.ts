@@ -705,7 +705,8 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 404 for an unknown connector', async () => {
-    const sql = mockSql([[]]) // getTableForProvider: aucune table trouvée
+    // providerExists : ni dans provider_registry, ni dans connector_item.
+    const sql = mockSql([[], []])
     const res = await app.request(
       '/ui/users/1/feed/inconnu',
       { headers: await authHeaders('admin') },
@@ -713,7 +714,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
     )
     expect(res.status).toBe(404)
     expect((await json(res)).error).toBe('Unknown connector')
-    expect(sql).toHaveBeenCalledTimes(1)
+    expect(sql).toHaveBeenCalledTimes(2)
   })
 
   it('returns the connector items for a subscribed user', async () => {

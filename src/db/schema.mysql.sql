@@ -37,6 +37,44 @@ CREATE TABLE IF NOT EXISTS provider_registry (
   updated_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 );
 
+-- ─── Contenu collecté par les providers ──────────────────────────────────────
+-- Une seule table pour tous les providers (colonne `provider` discriminante),
+-- à la place d'une table `connector_<name>` par provider. `content` reste une
+-- chaîne opaque : sa forme appartient au provider, l'API ne l'interprète pas.
+-- `params` ne sert aujourd'hui qu'à `scrap`.
+
+CREATE TABLE IF NOT EXISTS connector_item (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  provider      VARCHAR(64) NOT NULL,
+  repository_id INT NOT NULL,
+  version       VARCHAR(255),
+  content       TEXT NOT NULL,
+  params        JSON,
+  datetime      DATETIME(3),
+  executed_at   DATETIME(3) NOT NULL,
+  success       TINYINT(1) NOT NULL,
+  INDEX connector_item_provider_repo_idx (provider, repository_id, executed_at),
+  FOREIGN KEY (repository_id) REFERENCES repository(id)
+);
+
+-- ─── Clés d'API des connectors ────────────────────────────────────────────────
+-- Un connector n'a plus d'accès direct à la base : il s'authentifie auprès de
+-- l'API avec une clé, scopée à un seul `provider`. `key_hash` est un SHA-256 de
+-- la clé (secret déjà à haute entropie, pas un mot de passe humain). `key_prefix`
+-- (8 premiers caractères) identifie une clé dans l'interface admin sans jamais
+-- réafficher le secret complet.
+
+CREATE TABLE IF NOT EXISTS connector_key (
+  id           VARCHAR(64) PRIMARY KEY,
+  provider     VARCHAR(64) NOT NULL,
+  name         VARCHAR(255) NOT NULL,
+  key_hash     VARCHAR(64) NOT NULL UNIQUE,
+  key_prefix   VARCHAR(16) NOT NULL,
+  created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_used_at DATETIME(3),
+  revoked_at   DATETIME(3)
+);
+
 -- ─── Comptes ──────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS `user` (

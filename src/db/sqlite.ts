@@ -15,22 +15,24 @@
 
 import type {
   AdminRow,
+  ConnectorKeyRow,
+  ContentItemInput,
   ContentRow,
   DataSourceRow,
   DataStore,
   ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
+  NewConnectorKey,
   NewPendingUser,
   NewUser,
   PendingUserRow,
+  ProviderRegistration,
   RegistryEntry,
   Source,
   SubscriptionRow,
   UserRow,
 } from './port.js'
-
-const CONNECTOR_PREFIX = 'connector_'
 
 /** Le peu qu'on attend d'un client SQLite — compatible node:sqlite et better-sqlite3. */
 export interface SqliteClient {
@@ -90,23 +92,75 @@ export class SqliteStore implements DataStore {
   }
 
   // ── Découverte ────────────────────────────────────────────────────────────
+  // Un provider « existe » dès qu'il a une ligne dans `provider_registry`
+  // (écrite par `registerProvider`) ou du contenu dans `connector_item` — le
+  // premier des deux qu'un connector écrit le rend déjà visible, chaque
+  // source tolérant l'absence de l'autre.
+
+  /** Auto-cicatrisation : la table peut manquer si aucun connector ne s'est
+   *  encore jamais enregistré sur cette base. */
+  private ensureProviderRegistryTable(): void {
+    try {
+      this.db.run(
+        `CREATE TABLE IF NOT EXISTS provider_registry (
+           name TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+           sort_order INTEGER NOT NULL DEFAULT 100, template TEXT,
+           flux_approval TEXT NOT NULL DEFAULT 'auto',
+           updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+      )
+    } catch {
+      // best-effort
+    }
+  }
+
+  private registeredNames(): string[] {
+    try {
+      return this.all<{ name: string }>(
+        'SELECT name FROM provider_registry',
+      ).map((r) => r.name)
+    } catch {
+      return []
+    }
+  }
+
+  private namesWithContent(): string[] {
+    try {
+      return this.all<{ provider: string }>(
+        'SELECT DISTINCT provider FROM connector_item',
+      ).map((r) => r.provider)
+    } catch {
+      return []
+    }
+  }
 
   async listProviderNames(): Promise<string[]> {
-    const rows = this.all<{ name: string }>(
-      `SELECT name FROM sqlite_master
-       WHERE type = 'table' AND name LIKE ? ORDER BY name`,
-      [`${CONNECTOR_PREFIX}%`],
-    )
-    return rows.map((r) => r.name.slice(CONNECTOR_PREFIX.length))
+    const names = new Set([
+      ...this.registeredNames(),
+      ...this.namesWithContent(),
+    ])
+    return [...names].sort()
   }
 
   async providerExists(name: string): Promise<boolean> {
-    return Boolean(
-      this.one(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
-        [CONNECTOR_PREFIX + name],
-      ),
-    )
+    try {
+      if (
+        this.one('SELECT name FROM provider_registry WHERE name = ?', [name])
+      ) {
+        return true
+      }
+    } catch {
+      // table absente : retombe sur la deuxième source
+    }
+    try {
+      return Boolean(
+        this.one(
+          'SELECT provider FROM connector_item WHERE provider = ? LIMIT 1',
+          [name],
+        ),
+      )
+    } catch {
+      return false
+    }
   }
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
@@ -136,38 +190,43 @@ export class SqliteStore implements DataStore {
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
+  // Une seule table `connector_item`, partagée par tous les providers.
 
-  private columns(table: string): Set<string> {
-    const rows = this.all<{ name: string }>(`PRAGMA table_info("${table}")`)
-    return new Set(rows.map((r) => r.name))
-  }
-
-  private sourceColumn(table: string): string {
-    return this.columns(table).has('provider_id')
-      ? 'provider_id'
-      : 'repository_id'
+  private ensureConnectorItemTable(): void {
+    try {
+      this.db.run(
+        `CREATE TABLE IF NOT EXISTS connector_item (
+           id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL,
+           repository_id INTEGER NOT NULL REFERENCES repository(id),
+           version TEXT, content TEXT NOT NULL, params TEXT,
+           datetime TEXT, executed_at TEXT NOT NULL, success INTEGER NOT NULL)`,
+      )
+      this.db.run(
+        `CREATE INDEX IF NOT EXISTS connector_item_provider_repo_idx
+           ON connector_item (provider, repository_id, executed_at DESC)`,
+      )
+    } catch {
+      // best-effort
+    }
   }
 
   async allContent(provider: string): Promise<ContentRow[]> {
     return this.all<ContentRow>(
-      `SELECT * FROM "${CONNECTOR_PREFIX}${provider}" ORDER BY id`,
+      'SELECT * FROM connector_item WHERE provider = ? ORDER BY id',
+      [provider],
     )
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    const table = CONNECTOR_PREFIX + provider
-    const cols = this.columns(table)
-    const fk = cols.has('provider_id') ? 'provider_id' : 'repository_id'
-    const order = cols.has('datetime')
-      ? 'COALESCE(datetime, executed_at)'
-      : 'executed_at'
-
     // Pas de DISTINCT ON en SQLite : une fenêtre fait le même travail.
     return this.all<ContentRow>(
       `SELECT * FROM (
-         SELECT *, ROW_NUMBER() OVER (PARTITION BY "${fk}" ORDER BY ${order} DESC) AS _rn
-         FROM "${table}"
+         SELECT *, ROW_NUMBER() OVER (
+           PARTITION BY repository_id ORDER BY COALESCE(datetime, executed_at) DESC
+         ) AS _rn
+         FROM connector_item WHERE provider = ?
        ) WHERE _rn = 1`,
+      [provider],
     )
   }
 
@@ -177,17 +236,15 @@ export class SqliteStore implements DataStore {
     limit: number,
   ): Promise<ContentRow[]> {
     if (sourceIds.length === 0) return []
-    const table = CONNECTOR_PREFIX + provider
     try {
-      const fk = this.sourceColumn(table)
       return this.all<ContentRow>(
         `SELECT * FROM (
-           SELECT *, ROW_NUMBER() OVER (PARTITION BY "${fk}" ORDER BY executed_at DESC) AS _rn
-           FROM "${table}"
-           WHERE "${fk}" IN (${placeholders(sourceIds.length)})
+           SELECT *, ROW_NUMBER() OVER (PARTITION BY repository_id ORDER BY executed_at DESC) AS _rn
+           FROM connector_item
+           WHERE provider = ? AND repository_id IN (${placeholders(sourceIds.length)})
          ) WHERE _rn <= ${limit}
-         ORDER BY "${fk}", executed_at DESC`,
-        sourceIds,
+         ORDER BY repository_id, executed_at DESC`,
+        [provider, ...sourceIds],
       )
     } catch (err) {
       console.error(`Failed to read provider "${provider}":`, err)
@@ -199,11 +256,168 @@ export class SqliteStore implements DataStore {
     provider: string,
     sourceId: number,
   ): Promise<void> {
-    if (!(await this.providerExists(provider))) return
     this.db.run(
-      `DELETE FROM "${CONNECTOR_PREFIX}${provider}" WHERE repository_id = ?`,
-      [sourceId],
+      'DELETE FROM connector_item WHERE provider = ? AND repository_id = ?',
+      [provider, sourceId],
     )
+  }
+
+  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+
+  async insertContentItems(
+    provider: string,
+    items: ContentItemInput[],
+  ): Promise<void> {
+    if (items.length === 0) return
+    this.ensureConnectorItemTable()
+    for (const item of items) {
+      this.db.run(
+        `INSERT INTO connector_item
+           (provider, repository_id, version, content, params, datetime, executed_at, success)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          provider,
+          item.repositoryId,
+          item.version ?? null,
+          item.content,
+          item.params == null ? null : JSON.stringify(item.params),
+          item.datetime ?? null,
+          item.executedAt,
+          item.success ? 1 : 0,
+        ],
+      )
+    }
+  }
+
+  async getLastKnownVersion(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string | null> {
+    const row = this.one<{ version: string | null }>(
+      `SELECT version FROM connector_item
+       WHERE provider = ? AND repository_id = ? AND success = 1
+       ORDER BY executed_at DESC LIMIT 1`,
+      [provider, repositoryId],
+    )
+    return row?.version ?? null
+  }
+
+  async listSourcesForProvider(provider: string): Promise<Source[]> {
+    return this.all<Source>(
+      'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
+      [provider],
+    ).map(parseConfig)
+  }
+
+  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
+   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  async logConnectorError(
+    _provider: string,
+    repositoryId: number | null,
+    error: string,
+    executedAt: string,
+  ): Promise<void> {
+    try {
+      this.db.run(
+        `CREATE TABLE IF NOT EXISTS log (
+           id INTEGER PRIMARY KEY AUTOINCREMENT, repository_id INTEGER,
+           error TEXT NOT NULL, executed_at TEXT NOT NULL)`,
+      )
+    } catch {
+      // best-effort
+    }
+    this.db.run(
+      'INSERT INTO log (repository_id, error, executed_at) VALUES (?, ?, ?)',
+      [repositoryId, error, executedAt],
+    )
+  }
+
+  async registerProvider(entry: ProviderRegistration): Promise<void> {
+    this.ensureProviderRegistryTable()
+    this.db.run(
+      `INSERT INTO provider_registry (name, display_name, sort_order, template)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (name) DO UPDATE SET
+         display_name = excluded.display_name,
+         template = excluded.template,
+         updated_at = datetime('now')`,
+      [
+        entry.name,
+        entry.displayName,
+        entry.sortOrder ?? 100,
+        entry.template == null ? null : JSON.stringify(entry.template),
+      ],
+    )
+  }
+
+  // ── Clés d'API des connectors ───────────────────────────────────────────────
+
+  private ensureConnectorKeyTable(): void {
+    try {
+      this.db.run(
+        `CREATE TABLE IF NOT EXISTS connector_key (
+           id TEXT PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL,
+           key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           last_used_at TEXT, revoked_at TEXT)`,
+      )
+    } catch {
+      // best-effort
+    }
+  }
+
+  async createConnectorKey(input: NewConnectorKey): Promise<{ id: string }> {
+    this.ensureConnectorKeyTable()
+    const id = crypto.randomUUID()
+    this.db.run(
+      `INSERT INTO connector_key (id, provider, name, key_hash, key_prefix)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, input.provider, input.name, input.keyHash, input.keyPrefix],
+    )
+    return { id }
+  }
+
+  async listConnectorKeys(): Promise<ConnectorKeyRow[]> {
+    this.ensureConnectorKeyTable()
+    return this.all<ConnectorKeyRow>(
+      `SELECT id, provider, name, key_prefix, created_at, last_used_at, revoked_at
+       FROM connector_key ORDER BY created_at DESC`,
+    )
+  }
+
+  async revokeConnectorKey(id: string): Promise<boolean> {
+    this.ensureConnectorKeyTable()
+    const before = this.one<{ id: string }>(
+      'SELECT id FROM connector_key WHERE id = ? AND revoked_at IS NULL',
+      [id],
+    )
+    if (!before) return false
+    this.db.run(
+      `UPDATE connector_key SET revoked_at = datetime('now') WHERE id = ?`,
+      [id],
+    )
+    return true
+  }
+
+  async findConnectorKeyByHash(
+    keyHash: string,
+  ): Promise<{ id: string; provider: string } | null> {
+    this.ensureConnectorKeyTable()
+    return this.one<{ id: string; provider: string }>(
+      'SELECT id, provider FROM connector_key WHERE key_hash = ? AND revoked_at IS NULL',
+      [keyHash],
+    )
+  }
+
+  async touchConnectorKeyUsage(id: string): Promise<void> {
+    try {
+      this.db.run(
+        `UPDATE connector_key SET last_used_at = datetime('now') WHERE id = ?`,
+        [id],
+      )
+    } catch {
+      // best-effort
+    }
   }
 
   // ── Sources ───────────────────────────────────────────────────────────────
