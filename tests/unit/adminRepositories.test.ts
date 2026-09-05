@@ -351,3 +351,155 @@ describe('identifiant de repository non numérique', () => {
     expect(sql).not.toHaveBeenCalled()
   })
 })
+
+// ─── Auth par clé connector, scopée à son propre provider ──────────────────────
+// Un connector qui gère lui-même ses flux (ex. stayup-cmd-scrap/admin.py) n'a
+// plus besoin d'un compte admin dédié : sa clé /connector-api existante suffit,
+// mais seulement pour les repositories de son propre type.
+
+const connectorKeyHeaders = { Authorization: 'Bearer stayup_conn_testkey' }
+
+// La clé traverse `ensureConnectorKeyTable` (sql.unsafe) puis le SELECT de
+// `findConnectorKeyByHash`, puis `touchConnectorKeyUsage` (best-effort) —
+// trois appels sql consommés avant même d'atteindre la route.
+function keyAuthResponses(provider: string) {
+  return [[], [{ id: 'key1', provider }], []]
+}
+
+describe('Auth par clé connector sur /ui/repositories', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns 401 for an unknown connector key', async () => {
+    mockSql([[], []]) // ensureConnectorKeyTable ; findConnectorKeyByHash -> rien
+    const res = await app.request(
+      '/ui/repositories',
+      { headers: connectorKeyHeaders },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('lists only repositories of the key own provider', async () => {
+    mockSql([
+      ...keyAuthResponses('scrap'),
+      [
+        { ...SAMPLE_REPO, id: 1, type: 'scrap' },
+        { ...SAMPLE_REPO, id: 2, type: 'rss' },
+      ],
+    ])
+    const res = await app.request(
+      '/ui/repositories',
+      { headers: connectorKeyHeaders },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.repositories).toEqual([
+      expect.objectContaining({ id: 1, type: 'scrap' }),
+    ])
+  })
+
+  it('creates a repository of its own provider', async () => {
+    mockSql([
+      ...keyAuthResponses('scrap'),
+      [], // findSourceByUrl
+      [{ id: 9, url: 'https://example.com/scrap', type: 'scrap' }], // createSource
+    ])
+    const res = await app.request(
+      '/ui/repositories',
+      {
+        method: 'POST',
+        headers: { ...connectorKeyHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: 'https://example.com/scrap',
+          type: 'scrap',
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(201)
+  })
+
+  it('refuses to create a repository of another provider', async () => {
+    const sql = mockSql([...keyAuthResponses('scrap')])
+    const res = await app.request(
+      '/ui/repositories',
+      {
+        method: 'POST',
+        headers: { ...connectorKeyHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/feed', type: 'rss' }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(403)
+    // 2 appels sql taggés de l'auth (le 3e, ensureConnectorKeyTable, passe par
+    // .unsafe et n'est pas compté ici), aucun de plus : refusé avant toute
+    // lecture de source.
+    expect(sql).toHaveBeenCalledTimes(2)
+  })
+
+  it('updates a repository of its own provider', async () => {
+    mockSql([
+      ...keyAuthResponses('scrap'),
+      [{ ...SAMPLE_REPO, id: 1, type: 'scrap' }], // getSource
+      [], // updateSourceConfig
+    ])
+    const res = await app.request(
+      '/ui/repositories/1',
+      {
+        method: 'PATCH',
+        headers: { ...connectorKeyHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { max_scraps: 5 } }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('hides a repository belonging to another provider (404, not 403)', async () => {
+    mockSql([
+      ...keyAuthResponses('scrap'),
+      [{ ...SAMPLE_REPO, id: 1, type: 'rss' }], // getSource
+    ])
+    const res = await app.request(
+      '/ui/repositories/1',
+      {
+        method: 'PATCH',
+        headers: { ...connectorKeyHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: {} }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('deletes a repository of its own provider', async () => {
+    mockSql([
+      ...keyAuthResponses('scrap'),
+      [{ ...SAMPLE_REPO, id: 1, type: 'scrap' }], // getSource
+      [], // deleteContentForSource
+      [], // deleteSubscriptionsForSource
+      [], // deleteSource
+    ])
+    const res = await app.request(
+      '/ui/repositories/1',
+      { method: 'DELETE', headers: connectorKeyHeaders },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('refuses to delete a repository of another provider', async () => {
+    const sql = mockSql([
+      ...keyAuthResponses('scrap'),
+      [{ ...SAMPLE_REPO, id: 1, type: 'rss' }], // getSource
+    ])
+    const res = await app.request(
+      '/ui/repositories/1',
+      { method: 'DELETE', headers: connectorKeyHeaders },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+    expect(sql).toHaveBeenCalledTimes(3) // 2 (auth) + getSource, arrêté avant toute suppression
+  })
+})
