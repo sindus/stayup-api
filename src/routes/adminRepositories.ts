@@ -46,6 +46,41 @@ adminRepositoriesRoute.post('/', async (c) => {
   return c.json({ id: repo.id, url: body.url, type: body.type }, 201)
 })
 
+// PATCH /:repoId — update an existing repository by id, url and/or config.
+// Distinct from POST / (upsert by url) : celle-ci cible une ligne existante
+// et peut changer son URL en place, ce qu'un upsert-par-url ne permet pas
+// (un nouvel URL y créerait une seconde ligne au lieu de renommer la première).
+adminRepositoriesRoute.patch('/:repoId', async (c) => {
+  const repoId = Number.parseInt(c.req.param('repoId') as string, 10)
+  if (Number.isNaN(repoId))
+    return c.json({ error: 'Repository not found' }, 404)
+
+  const body = await c.req.json<{
+    url?: string
+    config?: Record<string, unknown>
+  }>()
+
+  const store = await getStore(c.env.DATABASE_URL)
+  const repo = await store.getSource(repoId)
+  if (!repo) return c.json({ error: 'Repository not found' }, 404)
+
+  if (body.url !== undefined && body.url !== repo.url) {
+    try {
+      await store.updateSourceUrl(repoId, body.url)
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        return c.json({ error: 'This URL is already registered' }, 409)
+      }
+      throw err
+    }
+  }
+  if (body.config !== undefined) {
+    await store.updateSourceConfig(repoId, body.config)
+  }
+
+  return c.json({ success: true })
+})
+
 // GET / — list all repositories with subscriber count
 adminRepositoriesRoute.get('/', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)

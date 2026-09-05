@@ -504,6 +504,12 @@ export class PostgresStore implements DataStore {
     `
   }
 
+  async updateSourceUrl(id: number, url: string): Promise<void> {
+    // Violation d'unicité native Postgres : déjà '23505', pas besoin de la
+    // resynthétiser comme sur les autres moteurs.
+    await this.sql`UPDATE repository SET url = ${url} WHERE id = ${id}`
+  }
+
   async deleteSource(id: number): Promise<void> {
     await this.sql`DELETE FROM repository WHERE id = ${id}`
   }

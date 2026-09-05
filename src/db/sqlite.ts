@@ -526,6 +526,19 @@ export class SqliteStore implements DataStore {
     ])
   }
 
+  async updateSourceUrl(id: number, url: string): Promise<void> {
+    const taken = this.one<{ id: number }>(
+      'SELECT id FROM repository WHERE url = ? AND id != ?',
+      [url, id],
+    )
+    // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
+    // dire « déjà pris » : les routes s'y réfèrent pour répondre 409.
+    if (taken) {
+      throw Object.assign(new Error('url already in use'), { code: '23505' })
+    }
+    this.db.run('UPDATE repository SET url = ? WHERE id = ?', [url, id])
+  }
+
   async deleteSource(id: number): Promise<void> {
     this.db.run('DELETE FROM repository WHERE id = ?', [id])
   }

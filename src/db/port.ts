@@ -305,6 +305,10 @@ export interface DataStore {
   }): Promise<Source>
   /** Met à jour la config d'une source existante, sans toucher à son type. */
   updateSourceConfig(id: number, config: Record<string, unknown>): Promise<void>
+  /** Renomme l'URL d'une source existante, sans toucher à son type ni sa
+   *  config. Lève une erreur portant `code: '23505'` si l'URL est déjà prise
+   *  par une autre source. */
+  updateSourceUrl(id: number, url: string): Promise<void>
   deleteSource(id: number): Promise<void>
   listSourcesWithSubscriberCount(): Promise<
     (Source & { subscriber_count: string })[]

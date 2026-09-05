@@ -508,6 +508,19 @@ export class MongoStore implements DataStore {
     )
   }
 
+  async updateSourceUrl(id: number, url: string): Promise<void> {
+    const taken = await this.col('repository').findOne({
+      url,
+      _id: { $ne: id },
+    })
+    // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
+    // dire « déjà pris » : les routes s'y réfèrent pour répondre 409.
+    if (taken) {
+      throw Object.assign(new Error('url already in use'), { code: '23505' })
+    }
+    await this.col('repository').updateOne({ _id: id }, { $set: { url } })
+  }
+
   async deleteSource(id: number): Promise<void> {
     await this.col('repository').deleteOne({ _id: id })
   }
