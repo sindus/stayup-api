@@ -40,10 +40,8 @@ describe('GET /ui/data-sources', () => {
 
 describe('POST /ui/data-sources/test', () => {
   it('reports the engine and the connectors it finds', async () => {
-    // listProviderNames → information_schema rows
-    mockSql([
-      [{ table_name: 'connector_rss' }, { table_name: 'connector_youtube' }],
-    ])
+    // listProviderNames: registeredNames, namesWithContent
+    mockSql([[{ name: 'rss' }, { name: 'youtube' }], []])
     const res = await adminReq('/ui/data-sources/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -70,8 +68,9 @@ describe('POST /ui/data-sources/test', () => {
 
 describe('POST /ui/data-sources', () => {
   it('stores a source once its probe finds a connector', async () => {
-    // probe listProviderNames ; ensureMultiDbTables (unsafe) ; INSERT RETURNING
-    mockSql([[{ table_name: 'connector_rss' }], undefined, [{ id: 7 }]])
+    // probe listProviderNames (registeredNames, namesWithContent) ;
+    // ensureMultiDbTables (unsafe) ; INSERT RETURNING
+    mockSql([[{ name: 'rss' }], [], undefined, [{ id: 7 }]])
     const res = await adminReq('/ui/data-sources', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

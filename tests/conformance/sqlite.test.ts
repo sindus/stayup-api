@@ -29,41 +29,33 @@ runDataStoreConformance('SQLite', {
     return new SqliteStore(client(db))
   },
 
+  // Le contenu vit dans la table unique `connector_item`, et « avoir un
+  // espace de stockage » correspond désormais à l'appel que fait un connector
+  // au tout début de son cycle de vie (`registerProvider`, avant même sa
+  // première tentative de collecte) : c'est le contrat `DataStore` lui-même
+  // qui sait atteindre l'un et l'autre pour ce moteur.
   async seedProvider(store, provider, rows) {
-    const db = (store as unknown as { db: SqliteClient }).db
-    // C'est le provider qui crée son espace de stockage, pas l'API : le test
-    // reproduit exactement ce que la documentation lui demande de faire.
-    db.run(`CREATE TABLE IF NOT EXISTS "connector_${provider}" (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      repository_id INTEGER NOT NULL REFERENCES repository(id),
-      content       TEXT NOT NULL,
-      datetime      TEXT,
-      executed_at   TEXT NOT NULL,
-      success       INTEGER NOT NULL DEFAULT 1
-    )`)
-    for (const row of rows) {
-      db.run(
-        `INSERT INTO "connector_${provider}" (repository_id, content, datetime, executed_at, success)
-         VALUES (?, ?, ?, ?, 1)`,
-        [row.repository_id, row.content, row.datetime ?? null, row.executed_at],
-      )
-    }
+    await store.registerProvider({ name: provider, displayName: provider })
+    await store.insertContentItems(
+      provider,
+      rows.map((row) => ({
+        repositoryId: row.repository_id,
+        content: row.content,
+        datetime: row.datetime ?? null,
+        executedAt: row.executed_at,
+        success: true,
+      })),
+    )
   },
 
   async seedRegistry(store, entries) {
-    const db = (store as unknown as { db: SqliteClient }).db
     for (const e of entries) {
-      db.run(
-        `INSERT INTO provider_registry (name, display_name, sort_order, template) VALUES (?, ?, ?, ?)
-         ON CONFLICT (name) DO UPDATE SET
-           display_name = excluded.display_name, template = excluded.template`,
-        [
-          e.name,
-          e.display_name,
-          e.sort_order,
-          e.template == null ? null : JSON.stringify(e.template),
-        ],
-      )
+      await store.registerProvider({
+        name: e.name,
+        displayName: e.display_name,
+        sortOrder: e.sort_order,
+        template: e.template,
+      })
     }
   },
 })

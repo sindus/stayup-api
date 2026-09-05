@@ -17,22 +17,24 @@
 
 import type {
   AdminRow,
+  ConnectorKeyRow,
+  ContentItemInput,
   ContentRow,
   DataSourceRow,
   DataStore,
   ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
+  NewConnectorKey,
   NewPendingUser,
   NewUser,
   PendingUserRow,
+  ProviderRegistration,
   RegistryEntry,
   Source,
   SubscriptionRow,
   UserRow,
 } from './port.js'
-
-const CONNECTOR_PREFIX = 'connector_'
 
 /** Le peu qu'on attend d'un client MySQL — mysql2/promise le remplit tel quel. */
 export interface MysqlClient {
@@ -106,6 +108,13 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
+/** MySQL rejette le « T » / « Z » d'ISO 8601 dans un DATETIME : les connectors
+ *  envoient des dates ISO (via l'API), c'est à l'adaptateur de les traduire —
+ *  pas à chaque appelant de le savoir. */
+function toMysqlDateTime(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 23).replace('T', ' ')
+}
+
 export class MysqlStore implements DataStore {
   constructor(private readonly db: MysqlClient) {}
 
@@ -118,25 +127,77 @@ export class MysqlStore implements DataStore {
   }
 
   // ── Découverte ────────────────────────────────────────────────────────────
+  // Un provider « existe » dès qu'il a une ligne dans `provider_registry`
+  // (écrite par `registerProvider`) ou du contenu dans `connector_item` — le
+  // premier des deux qu'un connector écrit le rend déjà visible, chaque
+  // source tolérant l'absence de l'autre.
+
+  /** Auto-cicatrisation : la table peut manquer si aucun connector ne s'est
+   *  encore jamais enregistré sur cette base. */
+  private async ensureProviderRegistryTable(): Promise<void> {
+    await this.db
+      .run(
+        `CREATE TABLE IF NOT EXISTS provider_registry (
+           name VARCHAR(64) PRIMARY KEY, display_name VARCHAR(255) NOT NULL,
+           sort_order INT NOT NULL DEFAULT 100, template JSON,
+           flux_approval VARCHAR(16) NOT NULL DEFAULT 'auto',
+           updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3))`,
+      )
+      .catch(() => {})
+  }
+
+  private async registeredNames(): Promise<string[]> {
+    try {
+      return (
+        await this.all<{ name: string }>('SELECT name FROM provider_registry')
+      ).map((r) => r.name)
+    } catch {
+      return []
+    }
+  }
+
+  private async namesWithContent(): Promise<string[]> {
+    try {
+      return (
+        await this.all<{ provider: string }>(
+          'SELECT DISTINCT provider FROM connector_item',
+        )
+      ).map((r) => r.provider)
+    } catch {
+      return []
+    }
+  }
 
   async listProviderNames(): Promise<string[]> {
-    const rows = await this.all<{ name: string }>(
-      `SELECT table_name AS name FROM information_schema.tables
-       WHERE table_schema = DATABASE() AND table_name LIKE ?
-       ORDER BY table_name`,
-      [`${CONNECTOR_PREFIX}%`],
-    )
-    return rows.map((r) => r.name.slice(CONNECTOR_PREFIX.length))
+    const names = new Set([
+      ...(await this.registeredNames()),
+      ...(await this.namesWithContent()),
+    ])
+    return [...names].sort()
   }
 
   async providerExists(name: string): Promise<boolean> {
-    return Boolean(
-      await this.one(
-        `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = DATABASE() AND table_name = ?`,
-        [CONNECTOR_PREFIX + name],
-      ),
-    )
+    try {
+      if (
+        await this.one('SELECT name FROM provider_registry WHERE name = ?', [
+          name,
+        ])
+      ) {
+        return true
+      }
+    } catch {
+      // table absente : retombe sur la deuxième source
+    }
+    try {
+      return Boolean(
+        await this.one(
+          'SELECT provider FROM connector_item WHERE provider = ? LIMIT 1',
+          [name],
+        ),
+      )
+    } catch {
+      return false
+    }
   }
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
@@ -167,42 +228,39 @@ export class MysqlStore implements DataStore {
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
+  // Une seule table `connector_item`, partagée par tous les providers.
 
-  private async columns(table: string): Promise<Set<string>> {
-    const rows = await this.all<{ name: string }>(
-      `SELECT column_name AS name FROM information_schema.columns
-       WHERE table_schema = DATABASE() AND table_name = ?`,
-      [table],
-    )
-    return new Set(rows.map((r) => r.name))
-  }
-
-  private async sourceColumn(table: string): Promise<string> {
-    return (await this.columns(table)).has('provider_id')
-      ? 'provider_id'
-      : 'repository_id'
+  private async ensureConnectorItemTable(): Promise<void> {
+    await this.db
+      .run(
+        `CREATE TABLE IF NOT EXISTS connector_item (
+           id INT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(64) NOT NULL,
+           repository_id INT NOT NULL, version VARCHAR(255),
+           content TEXT NOT NULL, params JSON, datetime DATETIME(3),
+           executed_at DATETIME(3) NOT NULL, success TINYINT(1) NOT NULL,
+           INDEX connector_item_provider_repo_idx (provider, repository_id, executed_at),
+           FOREIGN KEY (repository_id) REFERENCES repository(id))`,
+      )
+      .catch(() => {})
   }
 
   async allContent(provider: string): Promise<ContentRow[]> {
     return this.all<ContentRow>(
-      `SELECT * FROM \`${CONNECTOR_PREFIX}${provider}\` ORDER BY id`,
+      'SELECT * FROM connector_item WHERE provider = ? ORDER BY id',
+      [provider],
     )
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    const table = CONNECTOR_PREFIX + provider
-    const cols = await this.columns(table)
-    const fk = cols.has('provider_id') ? 'provider_id' : 'repository_id'
-    const order = cols.has('datetime')
-      ? 'COALESCE(`datetime`, `executed_at`)'
-      : '`executed_at`'
-
     // Pas de DISTINCT ON : une fenêtre fait le même travail (MySQL 8, MariaDB 10.2).
     return this.all<ContentRow>(
       `SELECT * FROM (
-         SELECT t.*, ROW_NUMBER() OVER (PARTITION BY \`${fk}\` ORDER BY ${order} DESC) AS _rn
-         FROM \`${table}\` t
-       ) ranked WHERE _rn = 1 ORDER BY \`${fk}\``,
+         SELECT t.*, ROW_NUMBER() OVER (
+           PARTITION BY \`repository_id\` ORDER BY COALESCE(\`datetime\`, \`executed_at\`) DESC
+         ) AS _rn
+         FROM connector_item t WHERE t.provider = ?
+       ) ranked WHERE _rn = 1 ORDER BY \`repository_id\``,
+      [provider],
     )
   }
 
@@ -212,17 +270,15 @@ export class MysqlStore implements DataStore {
     limit: number,
   ): Promise<ContentRow[]> {
     if (sourceIds.length === 0) return []
-    const table = CONNECTOR_PREFIX + provider
     try {
-      const fk = await this.sourceColumn(table)
       return await this.all<ContentRow>(
         `SELECT * FROM (
-           SELECT t.*, ROW_NUMBER() OVER (PARTITION BY \`${fk}\` ORDER BY \`executed_at\` DESC) AS _rn
-           FROM \`${table}\` t
-           WHERE \`${fk}\` IN (${placeholders(sourceIds.length)})
+           SELECT t.*, ROW_NUMBER() OVER (PARTITION BY \`repository_id\` ORDER BY \`executed_at\` DESC) AS _rn
+           FROM connector_item t
+           WHERE t.provider = ? AND t.repository_id IN (${placeholders(sourceIds.length)})
          ) ranked WHERE _rn <= ${limit}
-         ORDER BY \`${fk}\`, \`executed_at\` DESC`,
-        sourceIds,
+         ORDER BY \`repository_id\`, \`executed_at\` DESC`,
+        [provider, ...sourceIds],
       )
     } catch (err) {
       console.error(`Failed to read provider "${provider}":`, err)
@@ -234,11 +290,160 @@ export class MysqlStore implements DataStore {
     provider: string,
     sourceId: number,
   ): Promise<void> {
-    if (!(await this.providerExists(provider))) return
     await this.db.run(
-      `DELETE FROM \`${CONNECTOR_PREFIX}${provider}\` WHERE repository_id = ?`,
-      [sourceId],
+      'DELETE FROM connector_item WHERE provider = ? AND repository_id = ?',
+      [provider, sourceId],
     )
+  }
+
+  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+
+  async insertContentItems(
+    provider: string,
+    items: ContentItemInput[],
+  ): Promise<void> {
+    if (items.length === 0) return
+    await this.ensureConnectorItemTable()
+    for (const item of items) {
+      await this.db.run(
+        `INSERT INTO connector_item
+           (provider, repository_id, version, content, params, datetime, executed_at, success)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          provider,
+          item.repositoryId,
+          item.version ?? null,
+          item.content,
+          item.params == null ? null : JSON.stringify(item.params),
+          item.datetime ? toMysqlDateTime(item.datetime) : null,
+          toMysqlDateTime(item.executedAt),
+          item.success ? 1 : 0,
+        ],
+      )
+    }
+  }
+
+  async getLastKnownVersion(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string | null> {
+    const row = await this.one<{ version: string | null }>(
+      `SELECT version FROM connector_item
+       WHERE provider = ? AND repository_id = ? AND success = 1
+       ORDER BY executed_at DESC LIMIT 1`,
+      [provider, repositoryId],
+    )
+    return row?.version ?? null
+  }
+
+  async listSourcesForProvider(provider: string): Promise<Source[]> {
+    return (
+      await this.all<Source>(
+        'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
+        [provider],
+      )
+    ).map(parseConfig)
+  }
+
+  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
+   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  async logConnectorError(
+    _provider: string,
+    repositoryId: number | null,
+    error: string,
+    executedAt: string,
+  ): Promise<void> {
+    await this.db
+      .run(
+        `CREATE TABLE IF NOT EXISTS log (
+           id INT AUTO_INCREMENT PRIMARY KEY, repository_id INT,
+           error TEXT NOT NULL, executed_at DATETIME(3) NOT NULL)`,
+      )
+      .catch(() => {})
+    await this.db.run(
+      'INSERT INTO log (repository_id, error, executed_at) VALUES (?, ?, ?)',
+      [repositoryId, error, toMysqlDateTime(executedAt)],
+    )
+  }
+
+  async registerProvider(entry: ProviderRegistration): Promise<void> {
+    await this.ensureProviderRegistryTable()
+    await this.db.run(
+      `INSERT INTO provider_registry (name, display_name, sort_order, template)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         template = VALUES(template),
+         updated_at = CURRENT_TIMESTAMP(3)`,
+      [
+        entry.name,
+        entry.displayName,
+        entry.sortOrder ?? 100,
+        entry.template == null ? null : JSON.stringify(entry.template),
+      ],
+    )
+  }
+
+  // ── Clés d'API des connectors ───────────────────────────────────────────────
+
+  private async ensureConnectorKeyTable(): Promise<void> {
+    await this.db
+      .run(
+        `CREATE TABLE IF NOT EXISTS connector_key (
+           id VARCHAR(64) PRIMARY KEY, provider VARCHAR(64) NOT NULL,
+           name VARCHAR(255) NOT NULL, key_hash VARCHAR(64) NOT NULL UNIQUE,
+           key_prefix VARCHAR(16) NOT NULL,
+           created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+           last_used_at DATETIME(3), revoked_at DATETIME(3))`,
+      )
+      .catch(() => {})
+  }
+
+  async createConnectorKey(input: NewConnectorKey): Promise<{ id: string }> {
+    await this.ensureConnectorKeyTable()
+    const id = crypto.randomUUID()
+    await this.db.run(
+      `INSERT INTO connector_key (id, provider, name, key_hash, key_prefix)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, input.provider, input.name, input.keyHash, input.keyPrefix],
+    )
+    return { id }
+  }
+
+  async listConnectorKeys(): Promise<ConnectorKeyRow[]> {
+    await this.ensureConnectorKeyTable()
+    return this.all<ConnectorKeyRow>(
+      `SELECT id, provider, name, key_prefix, created_at, last_used_at, revoked_at
+       FROM connector_key ORDER BY created_at DESC`,
+    )
+  }
+
+  async revokeConnectorKey(id: string): Promise<boolean> {
+    await this.ensureConnectorKeyTable()
+    const res = await this.db.run(
+      'UPDATE connector_key SET revoked_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND revoked_at IS NULL',
+      [id],
+    )
+    return res.affectedRows > 0
+  }
+
+  async findConnectorKeyByHash(
+    keyHash: string,
+  ): Promise<{ id: string; provider: string } | null> {
+    await this.ensureConnectorKeyTable()
+    return this.one<{ id: string; provider: string }>(
+      'SELECT id, provider FROM connector_key WHERE key_hash = ? AND revoked_at IS NULL',
+      [keyHash],
+    )
+  }
+
+  async touchConnectorKeyUsage(id: string): Promise<void> {
+    await this.db
+      .run(
+        'UPDATE connector_key SET last_used_at = CURRENT_TIMESTAMP(3) WHERE id = ?',
+        [id],
+      )
+      .catch(() => {})
   }
 
   // ── Sources ───────────────────────────────────────────────────────────────

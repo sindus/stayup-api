@@ -53,41 +53,31 @@ runDataStoreConformance('PostgreSQL', {
     return new PostgresStore(scoped)
   },
 
+  // Le contenu vit dans la table unique `connector_item` : c'est le contrat
+  // `DataStore` lui-même (registerProvider/insertContentItems) qui sait
+  // l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi.
   async seedProvider(store, provider, rows) {
-    const scoped = (store as unknown as { sql: typeof sql }).sql
-    // C'est le provider qui crée son espace de stockage, pas l'API.
-    await scoped.unsafe(`CREATE TABLE IF NOT EXISTS "connector_${provider}" (
-      id            SERIAL PRIMARY KEY,
-      repository_id INTEGER NOT NULL REFERENCES repository(id),
-      content       TEXT NOT NULL,
-      datetime      TIMESTAMPTZ,
-      executed_at   TIMESTAMPTZ NOT NULL,
-      success       BOOLEAN NOT NULL DEFAULT TRUE
-    )`)
-    for (const row of rows) {
-      await scoped.unsafe(
-        `INSERT INTO "connector_${provider}" (repository_id, content, datetime, executed_at, success)
-         VALUES ($1, $2, $3, $4, TRUE)`,
-        [row.repository_id, row.content, row.datetime ?? null, row.executed_at],
-      )
-    }
+    await store.registerProvider({ name: provider, displayName: provider })
+    await store.insertContentItems(
+      provider,
+      rows.map((row) => ({
+        repositoryId: row.repository_id,
+        content: row.content,
+        datetime: row.datetime ?? null,
+        executedAt: row.executed_at,
+        success: true,
+      })),
+    )
   },
 
   async seedRegistry(store, entries) {
-    const scoped = (store as unknown as { sql: typeof sql }).sql
     for (const e of entries) {
-      await scoped.unsafe(
-        `INSERT INTO provider_registry (name, display_name, sort_order, template)
-         VALUES ($1, $2, $3, $4::jsonb)
-         ON CONFLICT (name) DO UPDATE SET
-           display_name = EXCLUDED.display_name, template = EXCLUDED.template`,
-        [
-          e.name,
-          e.display_name,
-          e.sort_order,
-          e.template == null ? null : JSON.stringify(e.template),
-        ],
-      )
+      await store.registerProvider({
+        name: e.name,
+        displayName: e.display_name,
+        sortOrder: e.sort_order,
+        template: e.template,
+      })
     }
   },
 })

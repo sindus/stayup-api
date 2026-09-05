@@ -29,23 +29,19 @@ const connections: mysql.Connection[] = []
 const databases: string[] = []
 
 afterAll(async () => {
-  for (const c of connections) await c.end()
+  await Promise.all(connections.map((c) => c.end()))
   if (databases.length > 0) {
     const admin = await mysql.createConnection(BASE)
-    for (const name of databases) {
-      await admin.query(`DROP DATABASE IF EXISTS \`${name}\``)
-    }
+    // Une base par cas de test (voir plus haut) : à ce nombre, les DROP
+    // séquentiels dépassent le hookTimeout par défaut de Vitest.
+    await Promise.all(
+      databases.map((name) =>
+        admin.query(`DROP DATABASE IF EXISTS \`${name}\``),
+      ),
+    )
     await admin.end()
   }
-})
-
-/** Le contenu semé passe par la connexion du store, pas par une autre. */
-const conns = new WeakMap<DataStore, mysql.Connection>()
-
-/** MySQL n'accepte pas le « T » ni le « Z » d'ISO 8601 dans un DATETIME. */
-function toMysqlDate(iso: string): string {
-  return new Date(iso).toISOString().slice(0, 23).replace('T', ' ')
-}
+}, 30000)
 
 runDataStoreConformance('MySQL', {
   async freshStore(): Promise<DataStore> {
@@ -62,55 +58,35 @@ runDataStoreConformance('MySQL', {
     connections.push(conn)
     await conn.query(SCHEMA)
 
-    const store = new MysqlStore(mysqlClient(conn))
-    conns.set(store, conn)
-    return store
+    return new MysqlStore(mysqlClient(conn))
   },
 
+  // Le contenu vit dans la table unique `connector_item` : c'est le contrat
+  // `DataStore` lui-même (registerProvider/insertContentItems) qui sait
+  // l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi,
+  // dates ISO comprises : c'est `MysqlStore` qui les traduit pour MySQL.
   async seedProvider(store, provider, rows) {
-    const conn = conns.get(store)
-    if (!conn) throw new Error('connexion introuvable pour ce store')
-    // C'est le provider qui crée son espace de stockage, pas l'API : le test
-    // reproduit exactement ce que la documentation lui demande de faire.
-    await conn.query(`CREATE TABLE IF NOT EXISTS \`connector_${provider}\` (
-      id            INT AUTO_INCREMENT PRIMARY KEY,
-      repository_id INT NOT NULL,
-      content       TEXT NOT NULL,
-      \`datetime\`  DATETIME(3),
-      executed_at   DATETIME(3) NOT NULL,
-      success       TINYINT(1) NOT NULL DEFAULT 1,
-      FOREIGN KEY (repository_id) REFERENCES repository(id)
-    )`)
-    for (const row of rows) {
-      await conn.query(
-        `INSERT INTO \`connector_${provider}\` (repository_id, content, \`datetime\`, executed_at, success)
-         VALUES (?, ?, ?, ?, 1)`,
-        [
-          row.repository_id,
-          row.content,
-          row.datetime ? toMysqlDate(row.datetime) : null,
-          toMysqlDate(row.executed_at),
-        ],
-      )
-    }
+    await store.registerProvider({ name: provider, displayName: provider })
+    await store.insertContentItems(
+      provider,
+      rows.map((row) => ({
+        repositoryId: row.repository_id,
+        content: row.content,
+        datetime: row.datetime ?? null,
+        executedAt: row.executed_at,
+        success: true,
+      })),
+    )
   },
 
   async seedRegistry(store, entries) {
-    const conn = conns.get(store)
-    if (!conn) throw new Error('connexion introuvable pour ce store')
     for (const e of entries) {
-      await conn.query(
-        `INSERT INTO provider_registry (name, display_name, sort_order, template)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           display_name = VALUES(display_name), template = VALUES(template)`,
-        [
-          e.name,
-          e.display_name,
-          e.sort_order,
-          e.template == null ? null : JSON.stringify(e.template),
-        ],
-      )
+      await store.registerProvider({
+        name: e.name,
+        displayName: e.display_name,
+        sortOrder: e.sort_order,
+        template: e.template,
+      })
     }
   },
 })

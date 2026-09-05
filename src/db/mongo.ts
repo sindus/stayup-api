@@ -23,22 +23,24 @@
 import type { Collection, Db, Document } from 'mongodb'
 import type {
   AdminRow,
+  ConnectorKeyRow,
+  ContentItemInput,
   ContentRow,
   DataSourceRow,
   DataStore,
   ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
+  NewConnectorKey,
   NewPendingUser,
   NewUser,
   PendingUserRow,
+  ProviderRegistration,
   RegistryEntry,
   Source,
   SubscriptionRow,
   UserRow,
 } from './port.js'
-
-const CONNECTOR_PREFIX = 'connector_'
 
 /**
  * Nos documents portent une clé primaire explicite — un entier pour une source,
@@ -102,6 +104,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { user_id: 1, data_source_id: 1, source_url: 1 },
       { unique: true },
     )
+  await db
+    .collection('connector_item')
+    .createIndex({ provider: 1, repository_id: 1, executed_at: -1 })
+  await db
+    .collection('connector_key')
+    .createIndex({ key_hash: 1 }, { unique: true })
   // Migration douce : renomme l'ancienne collection AVANT de toucher la nouvelle.
   const names = (
     await db.listCollections({}, { nameOnly: true }).toArray()
@@ -134,23 +142,25 @@ export class MongoStore implements DataStore {
   }
 
   // ── Découverte ────────────────────────────────────────────────────────────
+  // Un provider « existe » dès qu'il a un document dans `provider_registry`
+  // (écrit par `registerProvider`) ou du contenu dans `connector_item` — le
+  // premier des deux qu'un connector écrit le rend déjà visible.
 
   async listProviderNames(): Promise<string[]> {
-    const collections = await this.db
-      .listCollections({}, { nameOnly: true })
+    const registered = await this.col('provider_registry')
+      .find({}, { projection: { _id: 1 } })
       .toArray()
-    return collections
-      .map((c) => c.name)
-      .filter((n) => n.startsWith(CONNECTOR_PREFIX))
-      .map((n) => n.slice(CONNECTOR_PREFIX.length))
-      .sort()
+    const withContent = await this.col('connector_item').distinct('provider')
+    const names = new Set([
+      ...registered.map((r) => String(r._id)),
+      ...withContent.map((p) => String(p)),
+    ])
+    return [...names].sort()
   }
 
   async providerExists(name: string): Promise<boolean> {
-    const found = await this.db
-      .listCollections({ name: CONNECTOR_PREFIX + name }, { nameOnly: true })
-      .toArray()
-    return found.length > 0
+    if (await this.col('provider_registry').findOne({ _id: name })) return true
+    return Boolean(await this.col('connector_item').findOne({ provider: name }))
   }
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
@@ -184,14 +194,7 @@ export class MongoStore implements DataStore {
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
-
-  /** Champ de rattachement d'un contenu à sa source, `provider_id` étant toléré. */
-  private async sourceField(collection: string): Promise<string> {
-    const doc = await this.col(collection).findOne({
-      provider_id: { $exists: true },
-    })
-    return doc ? 'provider_id' : 'repository_id'
-  }
+  // Une seule collection `connector_item`, partagée par tous les providers.
 
   /** Date de tri : celle du contenu si le provider l'a écrite, sinon la collecte. */
   private static sortKey(withDatetime: boolean): Document {
@@ -206,24 +209,22 @@ export class MongoStore implements DataStore {
   }
 
   async allContent(provider: string): Promise<ContentRow[]> {
-    const rows = await this.col(CONNECTOR_PREFIX + provider)
-      .find({})
+    const rows = await this.col('connector_item')
+      .find({ provider })
       .sort({ _id: 1 })
       .toArray()
     return rows.map(toRow)
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    const collection = CONNECTOR_PREFIX + provider
-    const fk = await this.sourceField(collection)
-
-    const rows = await this.col(collection)
+    const rows = await this.col('connector_item')
       .aggregate([
+        { $match: { provider } },
         { $addFields: { _sortKey: MongoStore.sortKey(true) } },
         { $sort: { _sortKey: -1 } },
-        { $group: { _id: `$${fk}`, doc: { $first: '$$ROOT' } } },
+        { $group: { _id: '$repository_id', doc: { $first: '$$ROOT' } } },
         { $replaceRoot: { newRoot: '$doc' } },
-        { $sort: { [fk]: 1 } },
+        { $sort: { repository_id: 1 } },
         { $unset: '_sortKey' },
       ])
       .toArray()
@@ -236,19 +237,17 @@ export class MongoStore implements DataStore {
     limit: number,
   ): Promise<ContentRow[]> {
     if (sourceIds.length === 0) return []
-    const collection = CONNECTOR_PREFIX + provider
     try {
-      const fk = await this.sourceField(collection)
-      const rows = await this.col(collection)
+      const rows = await this.col('connector_item')
         .aggregate([
-          { $match: { [fk]: { $in: sourceIds } } },
+          { $match: { provider, repository_id: { $in: sourceIds } } },
           { $addFields: { _sortKey: MongoStore.sortKey(false) } },
           { $sort: { _sortKey: -1 } },
-          { $group: { _id: `$${fk}`, docs: { $push: '$$ROOT' } } },
+          { $group: { _id: '$repository_id', docs: { $push: '$$ROOT' } } },
           { $project: { docs: { $slice: ['$docs', limit] } } },
           { $unwind: '$docs' },
           { $replaceRoot: { newRoot: '$docs' } },
-          { $sort: { [fk]: 1, _sortKey: -1 } },
+          { $sort: { repository_id: 1, _sortKey: -1 } },
           { $unset: '_sortKey' },
         ])
         .toArray()
@@ -263,10 +262,146 @@ export class MongoStore implements DataStore {
     provider: string,
     sourceId: number,
   ): Promise<void> {
-    if (!(await this.providerExists(provider))) return
-    await this.col(CONNECTOR_PREFIX + provider).deleteMany({
+    await this.col('connector_item').deleteMany({
+      provider,
       repository_id: sourceId,
     })
+  }
+
+  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+
+  async insertContentItems(
+    provider: string,
+    items: ContentItemInput[],
+  ): Promise<void> {
+    if (items.length === 0) return
+    // Pas de `_id` explicite ici, à la différence des autres collections :
+    // `allContent` trie par `_id`, et un ObjectId auto-généré grandit dans
+    // l'ordre d'insertion — un UUID aléatoire ne le garantirait pas.
+    await this.db.collection('connector_item').insertMany(
+      items.map((item) => ({
+        provider,
+        repository_id: item.repositoryId,
+        version: item.version ?? null,
+        content: item.content,
+        params: item.params ?? null,
+        datetime: item.datetime ?? null,
+        executed_at: item.executedAt,
+        success: item.success,
+      })),
+    )
+  }
+
+  async getLastKnownVersion(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string | null> {
+    const doc = await this.col('connector_item')
+      .find({ provider, repository_id: repositoryId, success: true })
+      .sort({ executed_at: -1 })
+      .limit(1)
+      .next()
+    return (doc?.version as string | undefined) ?? null
+  }
+
+  async listSourcesForProvider(provider: string): Promise<Source[]> {
+    const rows = await this.col('repository')
+      .find({ type: provider })
+      .sort({ _id: 1 })
+      .toArray()
+    return rows.map(toSource)
+  }
+
+  /** `log` n'a pas de champ `provider` : elle se déduit de `repository_id`
+   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  async logConnectorError(
+    _provider: string,
+    repositoryId: number | null,
+    error: string,
+    executedAt: string,
+  ): Promise<void> {
+    await this.col('log').insertOne({
+      _id: crypto.randomUUID(),
+      repository_id: repositoryId,
+      error,
+      executed_at: executedAt,
+    })
+  }
+
+  async registerProvider(entry: ProviderRegistration): Promise<void> {
+    await this.col('provider_registry').updateOne(
+      { _id: entry.name },
+      {
+        $set: {
+          display_name: entry.displayName,
+          template: entry.template ?? null,
+          updated_at: nowIso(),
+        },
+        $setOnInsert: {
+          sort_order: entry.sortOrder ?? 100,
+          flux_approval: 'auto',
+        },
+      },
+      { upsert: true },
+    )
+  }
+
+  // ── Clés d'API des connectors ───────────────────────────────────────────────
+
+  async createConnectorKey(input: NewConnectorKey): Promise<{ id: string }> {
+    const id = crypto.randomUUID()
+    await this.col('connector_key').insertOne({
+      _id: id,
+      provider: input.provider,
+      name: input.name,
+      key_hash: input.keyHash,
+      key_prefix: input.keyPrefix,
+      created_at: nowIso(),
+      last_used_at: null,
+      revoked_at: null,
+    })
+    return { id }
+  }
+
+  async listConnectorKeys(): Promise<ConnectorKeyRow[]> {
+    const rows = await this.col('connector_key')
+      .find({})
+      .sort({ created_at: -1 })
+      .toArray()
+    return rows.map((r) => ({
+      id: String(r._id),
+      provider: r.provider as string,
+      name: r.name as string,
+      key_prefix: r.key_prefix as string,
+      created_at: r.created_at as string,
+      last_used_at: (r.last_used_at as string | null) ?? null,
+      revoked_at: (r.revoked_at as string | null) ?? null,
+    }))
+  }
+
+  async revokeConnectorKey(id: string): Promise<boolean> {
+    const res = await this.col('connector_key').updateOne(
+      { _id: id, revoked_at: null },
+      { $set: { revoked_at: nowIso() } },
+    )
+    return res.modifiedCount > 0
+  }
+
+  async findConnectorKeyByHash(
+    keyHash: string,
+  ): Promise<{ id: string; provider: string } | null> {
+    const doc = await this.col('connector_key').findOne({
+      key_hash: keyHash,
+      revoked_at: null,
+    })
+    if (!doc) return null
+    return { id: String(doc._id), provider: doc.provider as string }
+  }
+
+  async touchConnectorKeyUsage(id: string): Promise<void> {
+    await this.col('connector_key')
+      .updateOne({ _id: id }, { $set: { last_used_at: nowIso() } })
+      .catch(() => {})
   }
 
   // ── Sources ───────────────────────────────────────────────────────────────

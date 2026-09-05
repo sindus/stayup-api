@@ -9,22 +9,24 @@
 import type postgres from 'postgres'
 import type {
   AdminRow,
+  ConnectorKeyRow,
+  ContentItemInput,
   ContentRow,
   DataSourceRow,
   DataStore,
   ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
+  NewConnectorKey,
   NewPendingUser,
   NewUser,
   PendingUserRow,
+  ProviderRegistration,
   RegistryEntry,
   Source,
   SubscriptionRow,
   UserRow,
 } from './port.js'
-
-const CONNECTOR_PREFIX = 'connector_'
 
 /**
  * Répare une config doublement sérialisée.
@@ -73,30 +75,71 @@ export class PostgresStore implements DataStore {
 
   // ── Découverte ────────────────────────────────────────────────────────────
 
-  private async connectorTables(): Promise<string[]> {
-    const rows = await this.sql<{ table_name: string }[]>`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = current_schema()
-        AND table_name LIKE ${`${CONNECTOR_PREFIX}%`}
-      ORDER BY table_name
-    `
-    return rows.map((r) => r.table_name)
+  /** Auto-cicatrisation : la table peut manquer sur un déploiement Workers où
+   *  le schéma SQL n'est jamais appliqué et où aucun connector n'a encore
+   *  jamais appelé `registerProvider`. */
+  private async ensureProviderRegistryTable(): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS provider_registry (
+           name TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+           sort_order INTEGER NOT NULL DEFAULT 100, template JSONB,
+           flux_approval TEXT NOT NULL DEFAULT 'auto',
+           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      )
+      .catch(() => {})
+  }
+
+  /** Noms de `provider_registry`, tolérant l'absence de la table. */
+  private async registeredNames(): Promise<string[]> {
+    try {
+      const rows = await this.sql<{ name: string }[]>`
+        SELECT name FROM provider_registry
+      `
+      return rows.map((r) => r.name)
+    } catch {
+      return []
+    }
+  }
+
+  /** Noms distincts avec du contenu, tolérant l'absence de la table — chacune
+   *  des deux sources peut manquer indépendamment de l'autre. */
+  private async namesWithContent(): Promise<string[]> {
+    try {
+      const rows = await this.sql<{ provider: string }[]>`
+        SELECT DISTINCT provider FROM connector_item
+      `
+      return rows.map((r) => r.provider)
+    } catch {
+      return []
+    }
   }
 
   async listProviderNames(): Promise<string[]> {
-    return (await this.connectorTables()).map((t) =>
-      t.slice(CONNECTOR_PREFIX.length),
-    )
+    const names = new Set([
+      ...(await this.registeredNames()),
+      ...(await this.namesWithContent()),
+    ])
+    return [...names].sort()
   }
 
   async providerExists(name: string): Promise<boolean> {
-    const [row] = await this.sql<{ table_name: string }[]>`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = current_schema() AND table_name = ${CONNECTOR_PREFIX + name}
-    `
-    return Boolean(row)
+    try {
+      const [row] = await this.sql<{ name: string }[]>`
+        SELECT name FROM provider_registry WHERE name = ${name}
+      `
+      if (row) return true
+    } catch {
+      // table absente : retombe sur la deuxième source
+    }
+    try {
+      const [row] = await this.sql<{ provider: string }[]>`
+        SELECT provider FROM connector_item WHERE provider = ${name} LIMIT 1
+      `
+      return Boolean(row)
+    } catch {
+      return false
+    }
   }
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
@@ -144,42 +187,38 @@ export class PostgresStore implements DataStore {
   }
 
   // ── Contenu ───────────────────────────────────────────────────────────────
+  // Une seule table `connector_item`, partagée par tous les providers
+  // (`provider` filtré par valeur — plus par nom de table interpolé).
 
-  /** Colonne de rattachement d'un provider à ses sources. */
-  private async sourceColumn(table: string): Promise<string> {
-    const cols = await this.tableColumns(table)
-    return cols.has('provider_id') ? 'provider_id' : 'repository_id'
-  }
-
-  private async tableColumns(table: string): Promise<Set<string>> {
-    const rows = await this.sql<{ column_name: string }[]>`
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_schema = current_schema() AND table_name = ${table}
-    `
-    return new Set(rows.map((r) => r.column_name))
+  /** Auto-cicatrisation, même raison que `ensureProviderRegistryTable`. */
+  private async ensureConnectorItemTable(): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS connector_item (
+           id SERIAL PRIMARY KEY, provider TEXT NOT NULL,
+           repository_id INTEGER NOT NULL REFERENCES repository(id),
+           version TEXT, content TEXT NOT NULL, params JSONB,
+           datetime TIMESTAMPTZ, executed_at TIMESTAMPTZ NOT NULL,
+           success BOOLEAN NOT NULL);
+         CREATE INDEX IF NOT EXISTS connector_item_provider_repo_idx
+           ON connector_item (provider, repository_id, executed_at DESC)`,
+      )
+      .catch(() => {})
   }
 
   async allContent(provider: string): Promise<ContentRow[]> {
-    return this.sql.unsafe(
-      `SELECT * FROM "${CONNECTOR_PREFIX}${provider}" ORDER BY id`,
-    ) as Promise<ContentRow[]>
+    return this.sql<ContentRow[]>`
+      SELECT * FROM connector_item WHERE provider = ${provider} ORDER BY id
+    `
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    const table = CONNECTOR_PREFIX + provider
-    const cols = await this.tableColumns(table)
-    const fk = cols.has('provider_id') ? 'provider_id' : 'repository_id'
-    // Certaines tables n'ont pas de colonne datetime propre au contenu.
-    const order = cols.has('datetime')
-      ? 'COALESCE(datetime, executed_at)'
-      : 'executed_at'
-
-    return this.sql.unsafe(`
-      SELECT DISTINCT ON ("${fk}") *
-      FROM "${table}"
-      ORDER BY "${fk}", ${order} DESC
-    `) as Promise<ContentRow[]>
+    return this.sql<ContentRow[]>`
+      SELECT DISTINCT ON (repository_id) *
+      FROM connector_item
+      WHERE provider = ${provider}
+      ORDER BY repository_id, COALESCE(datetime, executed_at) DESC
+    `
   }
 
   async latestForSources(
@@ -188,25 +227,22 @@ export class PostgresStore implements DataStore {
     limit: number,
   ): Promise<ContentRow[]> {
     if (sourceIds.length === 0) return []
-    const table = CONNECTOR_PREFIX + provider
-    const fk = await this.sourceColumn(table)
     try {
-      return (await this.sql.unsafe(
-        `SELECT * FROM (
+      return await this.sql<ContentRow[]>`
+        SELECT * FROM (
           SELECT *,
             ROW_NUMBER() OVER (
-              PARTITION BY "${fk}" ORDER BY executed_at DESC
+              PARTITION BY repository_id ORDER BY executed_at DESC
             ) AS _rn
-          FROM "${table}"
-          WHERE "${fk}" = ANY($1)
+          FROM connector_item
+          WHERE provider = ${provider} AND repository_id = ANY(${sourceIds})
         ) ranked
         WHERE _rn <= ${limit}
-        ORDER BY "${fk}", executed_at DESC`,
-        [sourceIds],
-      )) as ContentRow[]
+        ORDER BY repository_id, executed_at DESC
+      `
     } catch (err) {
-      // Un provider dont la table ne respecte pas le contrat ne doit pas casser le
-      // feed entier, mais l'avaler en silence donnait un feed vide inexplicable.
+      // Une lecture qui échoue ne doit pas casser le feed entier, mais
+      // l'avaler en silence donnait un feed vide inexplicable.
       console.error(`Failed to read provider "${provider}":`, err)
       return []
     }
@@ -216,11 +252,157 @@ export class PostgresStore implements DataStore {
     provider: string,
     sourceId: number,
   ): Promise<void> {
-    if (!(await this.providerExists(provider))) return
-    await this.sql.unsafe(
-      `DELETE FROM "${CONNECTOR_PREFIX}${provider}" WHERE repository_id = $1`,
-      [sourceId],
-    )
+    await this.sql`
+      DELETE FROM connector_item
+      WHERE provider = ${provider} AND repository_id = ${sourceId}
+    `
+  }
+
+  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+
+  async insertContentItems(
+    provider: string,
+    items: ContentItemInput[],
+  ): Promise<void> {
+    if (items.length === 0) return
+    await this.ensureConnectorItemTable()
+    await this.sql.begin(async (transaction) => {
+      const tx = transaction as unknown as postgres.Sql
+      for (const item of items) {
+        const paramsValue =
+          item.params == null
+            ? null
+            : (tx.json(item.params as postgres.JSONValue) as never)
+        await tx`
+          INSERT INTO connector_item
+            (provider, repository_id, version, content, params, datetime, executed_at, success)
+          VALUES (${provider}, ${item.repositoryId}, ${item.version ?? null},
+                  ${item.content}, ${paramsValue}, ${item.datetime ?? null},
+                  ${item.executedAt}, ${item.success})
+        `
+      }
+    })
+  }
+
+  async getLastKnownVersion(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string | null> {
+    const [row] = await this.sql<{ version: string | null }[]>`
+      SELECT version FROM connector_item
+      WHERE provider = ${provider} AND repository_id = ${repositoryId} AND success = true
+      ORDER BY executed_at DESC
+      LIMIT 1
+    `
+    return row?.version ?? null
+  }
+
+  async listSourcesForProvider(provider: string): Promise<Source[]> {
+    const rows = await this.sql<Source[]>`
+      SELECT id, url, type, config, created_at FROM repository
+      WHERE type = ${provider}
+      ORDER BY id
+    `
+    return rows.map(repairConfig)
+  }
+
+  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
+   *  (via `repository.type`) partout ailleurs. Le paramètre est gardé pour la
+   *  symétrie de l'appel côté route, où une erreur peut survenir sans source
+   *  identifiée. */
+  async logConnectorError(
+    _provider: string,
+    repositoryId: number | null,
+    error: string,
+    executedAt: string,
+  ): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS log (
+           id SERIAL PRIMARY KEY, repository_id INTEGER,
+           error TEXT NOT NULL, executed_at TIMESTAMPTZ NOT NULL)`,
+      )
+      .catch(() => {})
+    await this.sql`
+      INSERT INTO log (repository_id, error, executed_at)
+      VALUES (${repositoryId}, ${error}, ${executedAt})
+    `
+  }
+
+  async registerProvider(entry: ProviderRegistration): Promise<void> {
+    await this.ensureProviderRegistryTable()
+    const templateValue =
+      entry.template == null
+        ? null
+        : (this.sql.json(entry.template as postgres.JSONValue) as never)
+    await this.sql`
+      INSERT INTO provider_registry (name, display_name, sort_order, template)
+      VALUES (${entry.name}, ${entry.displayName}, ${entry.sortOrder ?? 100}, ${templateValue})
+      ON CONFLICT (name) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        template = EXCLUDED.template,
+        updated_at = NOW()
+    `
+  }
+
+  // ── Clés d'API des connectors ───────────────────────────────────────────────
+
+  private async ensureConnectorKeyTable(): Promise<void> {
+    await this.sql
+      .unsafe(
+        `CREATE TABLE IF NOT EXISTS connector_key (
+           id TEXT PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL,
+           key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ)`,
+      )
+      .catch(() => {})
+  }
+
+  async createConnectorKey(input: NewConnectorKey): Promise<{ id: string }> {
+    await this.ensureConnectorKeyTable()
+    const id = crypto.randomUUID()
+    await this.sql`
+      INSERT INTO connector_key (id, provider, name, key_hash, key_prefix)
+      VALUES (${id}, ${input.provider}, ${input.name}, ${input.keyHash}, ${input.keyPrefix})
+    `
+    return { id }
+  }
+
+  async listConnectorKeys(): Promise<ConnectorKeyRow[]> {
+    await this.ensureConnectorKeyTable()
+    return this.sql<ConnectorKeyRow[]>`
+      SELECT id, provider, name, key_prefix, created_at, last_used_at, revoked_at
+      FROM connector_key
+      ORDER BY created_at DESC
+    `
+  }
+
+  async revokeConnectorKey(id: string): Promise<boolean> {
+    await this.ensureConnectorKeyTable()
+    const rows = await this.sql<{ id: string }[]>`
+      UPDATE connector_key SET revoked_at = NOW()
+      WHERE id = ${id} AND revoked_at IS NULL
+      RETURNING id
+    `
+    return rows.length > 0
+  }
+
+  async findConnectorKeyByHash(
+    keyHash: string,
+  ): Promise<{ id: string; provider: string } | null> {
+    await this.ensureConnectorKeyTable()
+    const [row] = await this.sql<{ id: string; provider: string }[]>`
+      SELECT id, provider FROM connector_key
+      WHERE key_hash = ${keyHash} AND revoked_at IS NULL
+    `
+    return row ?? null
+  }
+
+  async touchConnectorKeyUsage(id: string): Promise<void> {
+    await this.sql`
+      UPDATE connector_key SET last_used_at = NOW() WHERE id = ${id}
+    `.catch(() => {})
   }
 
   // ── Sources ───────────────────────────────────────────────────────────────

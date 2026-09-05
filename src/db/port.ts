@@ -3,18 +3,28 @@
  *
  * L'API ne parle plus SQL directement : elle appelle ces méthodes, et un
  * adaptateur les traduit pour son moteur. C'est ce qui permet d'héberger
- * l'API sur autre chose que PostgreSQL — y compris du NoSQL, où « table »
- * se lit « collection » et où la découverte passe par la liste des
- * collections au lieu d'information_schema.
+ * l'API sur autre chose que PostgreSQL — y compris du NoSQL.
  *
  * Deux règles pour qui écrit un adaptateur :
  *
  * 1. Les noms employés ici (repository, user_repository, provider_registry,
- *    connector_<name>, log) sont ceux du contrat documenté. Un adaptateur
- *    peut les stocker autrement, mais il doit exposer la même sémantique.
+ *    connector_item, connector_key, log) sont ceux du contrat documenté. Un
+ *    adaptateur peut les stocker autrement, mais il doit exposer la même
+ *    sémantique.
  * 2. Aucune méthode ne renvoie de type propre à un moteur. Les lignes de
  *    contenu d'un provider sont volontairement opaques : leur forme
  *    appartient au provider, pas à l'API.
+ *
+ * Le contenu collecté vit dans une seule table/collection `connector_item`,
+ * partagée par tous les providers (colonne `provider` discriminante) — pas
+ * une table `connector_<name>` par provider comme avant. Un provider « existe »
+ * (`listProviderNames`/`providerExists`) dès qu'il a une ligne dans
+ * `provider_registry` OU du contenu dans `connector_item` — l'un ou l'autre,
+ * comme avant la fusion : la découverte ne doit pas dépendre de l'ordre dans
+ * lequel un connector appelle `registerProvider` et `insertContentItems`.
+ *
+ * Les connectors n'ont plus d'accès direct à la base : ils passent par l'API,
+ * authentifiés par une clé (`connector_key`), scopée à un seul `provider`.
  */
 
 // ─── Formes partagées ────────────────────────────────────────────────────────
@@ -138,21 +148,74 @@ export interface NewAdmin {
   isSuper: boolean
 }
 
+/** Une ligne de contenu à écrire, envoyée par un connector via l'API. Mêmes
+ *  champs que ce que chaque `connector_<name>` portait avant la fusion —
+ *  `params` ne sert aujourd'hui qu'à `scrap`, `version`/`datetime` sont
+ *  optionnels (tous les providers ne les renseignent pas). */
+export interface ContentItemInput {
+  repositoryId: number
+  version?: string | null
+  content: string
+  params?: Record<string, unknown> | null
+  datetime?: string | null
+  executedAt: string
+  success: boolean
+}
+
+/** Ce qu'un connector déclare de lui-même au démarrage, avant tout envoi de
+ *  contenu — remplace l'auto-inscription SQL directe dans `provider_registry`.
+ *  `sortOrder` n'est pas réécrit sur une inscription déjà existante, comme
+ *  avant. `fluxApproval` n'est PAS de son ressort : seul un admin le change
+ *  (voir `setProviderApproval`) — un connector ne peut pas se rendre `manual`
+ *  ou `auto` lui-même. */
+export interface ProviderRegistration {
+  name: string
+  displayName: string
+  sortOrder?: number
+  template?: unknown
+}
+
+/** Une clé d'API de connector, sans le secret (jamais réaffiché après sa
+ *  création — voir `createConnectorKey`). */
+export interface ConnectorKeyRow {
+  id: string
+  provider: string
+  name: string
+  key_prefix: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+export interface NewConnectorKey {
+  provider: string
+  name: string
+  keyHash: string
+  keyPrefix: string
+}
+
 // ─── Le contrat ──────────────────────────────────────────────────────────────
 
 export interface DataStore {
   // ── Découverte des providers ──────────────────────────────────────────────
-  // Comment l'API sait quels providers existent. En SQL : les tables
-  // connector_*. En NoSQL : les collections du même préfixe.
+  // Comment l'API sait quels providers existent : une ligne dans
+  // `provider_registry` (écrite par `registerProvider`) ou du contenu dans
+  // `connector_item` — le premier des deux qu'un connector écrit le rend déjà
+  // visible, sans dépendre de l'ordre de ses appels.
 
-  /** Les noms de providers présents, sans le préfixe. */
+  /** Les noms de providers connus, d'une source ou de l'autre. */
   listProviderNames(): Promise<string[]>
-  /** Ce provider a-t-il un espace de stockage dans cette base ? */
+  /** Ce provider a-t-il une trace, enregistrement ou contenu ? */
   providerExists(name: string): Promise<boolean>
   /** Noms affichés déclarés par les providers. Absence tolérée : voir getProviders. */
   readRegistry(names: string[]): Promise<RegistryEntry[]>
-  /** Change le mode d'ajout de flux d'un provider (`auto` | `manual`). */
+  /** Change le mode d'ajout de flux d'un provider (`auto` | `manual`). Admin
+   *  uniquement — un connector ne peut pas s'auto-approuver. */
   setProviderApproval(name: string, approval: 'auto' | 'manual'): Promise<void>
+  /** Auto-déclaration d'un connector au démarrage (nom affiché + template).
+   *  Idempotent : un second appel met à jour `displayName`/`template`, jamais
+   *  `sortOrder` ni `flux_approval`. Crée la ligne si elle n'existe pas. */
+  registerProvider(entry: ProviderRegistration): Promise<void>
 
   // ── Contenu collecté ──────────────────────────────────────────────────────
 
@@ -168,6 +231,44 @@ export interface DataStore {
   ): Promise<ContentRow[]>
   /** Supprime le contenu d'une source. Sans effet si le provider n'existe pas. */
   deleteContentForSource(provider: string, sourceId: number): Promise<void>
+
+  // ── Contenu collecté (écriture, réservée aux connectors) ──────────────────
+
+  /** Écrit un lot de lignes pour ce provider en une fois. */
+  insertContentItems(provider: string, items: ContentItemInput[]): Promise<void>
+  /** `version` de la dernière ligne réussie pour cette source, ou null au
+   *  premier run — sert au connector à savoir où reprendre. */
+  getLastKnownVersion(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string | null>
+  /** Les sources suivies de ce provider (pas d'état d'abonnement : c'est un
+   *  connector qui appelle, pas un utilisateur). */
+  listSourcesForProvider(provider: string): Promise<Source[]>
+  /** Consigne une erreur de collecte dans `log`. */
+  logConnectorError(
+    provider: string,
+    repositoryId: number | null,
+    error: string,
+    executedAt: string,
+  ): Promise<void>
+
+  // ── Clés d'API des connectors (admin) ─────────────────────────────────────
+
+  /** Crée une clé pour un provider. Le secret n'est jamais stocké — seul son
+   *  hash l'est ; c'est l'appelant (la route) qui le génère et le renvoie une
+   *  seule fois. */
+  createConnectorKey(input: NewConnectorKey): Promise<{ id: string }>
+  listConnectorKeys(): Promise<ConnectorKeyRow[]>
+  /** true si une clé a bien été révoquée (existait, pas déjà révoquée). */
+  revokeConnectorKey(id: string): Promise<boolean>
+  /** La clé active correspondant à ce hash, ou null (absente ou révoquée). */
+  findConnectorKeyByHash(
+    keyHash: string,
+  ): Promise<{ id: string; provider: string } | null>
+  /** Met à jour `last_used_at`. Best-effort : un échec ne doit jamais faire
+   *  échouer la requête qu'il accompagne. */
+  touchConnectorKeyUsage(id: string): Promise<void>
 
   // ── Sources suivies ───────────────────────────────────────────────────────
 
