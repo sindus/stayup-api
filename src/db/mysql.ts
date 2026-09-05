@@ -15,6 +15,7 @@
  * de chaînes, pas d'objets Date. La fabrique d'adaptateurs s'en charge.
  */
 
+import { normalizeConfigObject } from './configShape.js'
 import type {
   AdminRow,
   ConnectorKeyRow,
@@ -349,10 +350,18 @@ export class MysqlStore implements DataStore {
     id: number,
     partial: Record<string, unknown>,
   ): Promise<void> {
-    await this.db.run(
-      'UPDATE repository SET config = JSON_MERGE_PATCH(config, ?) WHERE id = ?',
-      [JSON.stringify(partial), id],
+    // Lu-normalisé-fusionné-réécrit, pas `JSON_MERGE_PATCH` : cohérent avec
+    // les autres adaptateurs face à un `config` dégradé (voir configShape.ts).
+    const row = await this.one<{ config: unknown }>(
+      'SELECT config FROM repository WHERE id = ?',
+      [id],
     )
+    if (!row) return
+    const merged = { ...normalizeConfigObject(row.config), ...partial }
+    await this.db.run('UPDATE repository SET config = ? WHERE id = ?', [
+      JSON.stringify(merged),
+      id,
+    ])
   }
 
   /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`

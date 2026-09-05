@@ -13,6 +13,7 @@
  *   à partir de la liste.
  */
 
+import { normalizeConfigObject } from './configShape.js'
 import type {
   AdminRow,
   ConnectorKeyRow,
@@ -309,8 +310,9 @@ export class SqliteStore implements DataStore {
     ).map(parseConfig)
   }
 
-  /** Pas d'opérateur de fusion JSON natif en SQLite : lu, fusionné en JS,
-   *  réécrit — une seule connexion, donc sans concurrence à gérer ici. */
+  /** Lu, normalisé (voir configShape.ts — répare un `config` dégradé au
+   *  passage), fusionné en JS, réécrit. Une seule connexion, donc sans
+   *  concurrence à gérer ici. */
   async mergeSourceConfig(
     id: number,
     partial: Record<string, unknown>,
@@ -320,12 +322,9 @@ export class SqliteStore implements DataStore {
       [id],
     )
     if (!row) return
-    const current = parseConfig({ config: row.config }).config as Record<
-      string,
-      unknown
-    >
+    const merged = { ...normalizeConfigObject(row.config), ...partial }
     this.db.run('UPDATE repository SET config = ? WHERE id = ?', [
-      JSON.stringify({ ...current, ...partial }),
+      JSON.stringify(merged),
       id,
     ])
   }
