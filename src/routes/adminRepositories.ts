@@ -1,12 +1,14 @@
 import { Hono } from 'hono'
 import { getStore } from '../db/store.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import {
+  providerScope,
+  requireAdminOrOwnProviderKey,
+} from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
 export const adminRepositoriesRoute = new Hono<{ Bindings: Bindings }>()
 
-adminRepositoriesRoute.use('*', authMiddleware)
-adminRepositoriesRoute.use('*', requireAdmin)
+adminRepositoriesRoute.use('*', requireAdminOrOwnProviderKey)
 
 // POST / — create a new repository (scrap or other types)
 adminRepositoriesRoute.post('/', async (c) => {
@@ -18,6 +20,11 @@ adminRepositoriesRoute.post('/', async (c) => {
 
   if (!body.url || !body.type) {
     return c.json({ error: 'url and type are required' }, 400)
+  }
+
+  const scope = providerScope(c)
+  if (scope !== null && body.type !== scope) {
+    return c.json({ error: 'Forbidden' }, 403)
   }
 
   const store = await getStore(c.env.DATABASE_URL)
@@ -64,6 +71,11 @@ adminRepositoriesRoute.patch('/:repoId', async (c) => {
   const repo = await store.getSource(repoId)
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
 
+  const scope = providerScope(c)
+  if (scope !== null && repo.type !== scope) {
+    return c.json({ error: 'Repository not found' }, 404)
+  }
+
   if (body.url !== undefined && body.url !== repo.url) {
     try {
       await store.updateSourceUrl(repoId, body.url)
@@ -85,7 +97,9 @@ adminRepositoriesRoute.patch('/:repoId', async (c) => {
 adminRepositoriesRoute.get('/', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const rows = await store.listSourcesWithSubscriberCount()
-  return c.json({ repositories: rows })
+  const scope = providerScope(c)
+  const visible = scope === null ? rows : rows.filter((r) => r.type === scope)
+  return c.json({ repositories: visible })
 })
 
 // DELETE /:repoId/data — delete connector data only (keep repository + subscriptions)
@@ -98,6 +112,11 @@ adminRepositoriesRoute.delete('/:repoId/data', async (c) => {
 
   const repo = await store.getSource(repoId)
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
+
+  const scope = providerScope(c)
+  if (scope !== null && repo.type !== scope) {
+    return c.json({ error: 'Repository not found' }, 404)
+  }
 
   await store.deleteContentForSource(repo.type, repoId)
 
@@ -114,6 +133,11 @@ adminRepositoriesRoute.delete('/:repoId', async (c) => {
 
   const repo = await store.getSource(repoId)
   if (!repo) return c.json({ error: 'Repository not found' }, 404)
+
+  const scope = providerScope(c)
+  if (scope !== null && repo.type !== scope) {
+    return c.json({ error: 'Repository not found' }, 404)
+  }
 
   await store.deleteContentForSource(repo.type, repoId)
   await store.deleteSubscriptionsForSource(repoId)

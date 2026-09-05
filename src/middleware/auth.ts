@@ -61,6 +61,45 @@ export const requireOwnProvider = async (c: Context, next: Next) => {
   await next()
 }
 
+/**
+ * Accès à `/ui/repositories/*` pour un admin (JWT) OU une clé connector — sans
+ * quoi un connector qui gère lui-même ses flux (ex. `scrap`/admin.py) aurait
+ * besoin d'un vrai compte admin (email + mot de passe) rien que pour ça, un
+ * credential bien plus large et non révocable sans changer le mot de passe.
+ * Une clé connector reste scopée à son provider : voir `providerScope`, à
+ * appliquer dans chaque route pour restreindre l'accès aux repositories de ce
+ * seul provider.
+ */
+export const requireAdminOrOwnProviderKey = async (c: Context, next: Next) => {
+  const header = c.req.header('Authorization') ?? ''
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+
+  if (token.startsWith('stayup_conn_')) {
+    const env = c.env as Bindings
+    const store = await getStore(env.DATABASE_URL)
+    const keyHash = await hashConnectorKey(token)
+    const key = await store.findConnectorKeyByHash(keyHash)
+    if (!key) return c.json({ error: 'Unauthorized' }, 401)
+    c.set('connectorKey', key)
+    store.touchConnectorKeyUsage(key.id).catch(() => {})
+    await next()
+    return
+  }
+
+  return authMiddleware(c, async () => {
+    const forbidden = await requireAdmin(c, next)
+    if (forbidden) c.res = forbidden
+  })
+}
+
+/** `null` = admin JWT, accès complet. Une chaîne = clé connector, accès
+ *  restreint aux repositories de ce provider. À appeler après
+ *  `requireAdminOrOwnProviderKey`. */
+export const providerScope = (c: Context): string | null => {
+  const key = c.get('connectorKey') as { provider: string } | undefined
+  return key?.provider ?? null
+}
+
 export const requireSelfOrAdmin = async (c: Context, next: Next) => {
   const payload = c.get('jwtPayload') as { sub?: string; role?: string }
   if (payload?.role === 'admin') {
