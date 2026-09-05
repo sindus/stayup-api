@@ -312,6 +312,18 @@ export class MongoStore implements DataStore {
     return rows.map(toSource)
   }
 
+  /** Fusion superficielle via des clés en notation pointée (`config.<clé>`) :
+   *  un `$set` par clé de `partial`, atomique, sans lire-modifier-écrire. */
+  async mergeSourceConfig(
+    id: number,
+    partial: Record<string, unknown>,
+  ): Promise<void> {
+    const set = Object.fromEntries(
+      Object.entries(partial).map(([key, value]) => [`config.${key}`, value]),
+    )
+    await this.col('repository').updateOne({ _id: id }, { $set: set })
+  }
+
   /** `log` n'a pas de champ `provider` : elle se déduit de `repository_id`
    *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
   async logConnectorError(

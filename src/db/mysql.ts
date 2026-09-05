@@ -345,6 +345,16 @@ export class MysqlStore implements DataStore {
     ).map(parseConfig)
   }
 
+  async mergeSourceConfig(
+    id: number,
+    partial: Record<string, unknown>,
+  ): Promise<void> {
+    await this.db.run(
+      'UPDATE repository SET config = JSON_MERGE_PATCH(config, ?) WHERE id = ?',
+      [JSON.stringify(partial), id],
+    )
+  }
+
   /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
    *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
   async logConnectorError(

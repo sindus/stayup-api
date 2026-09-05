@@ -309,6 +309,27 @@ export class SqliteStore implements DataStore {
     ).map(parseConfig)
   }
 
+  /** Pas d'opérateur de fusion JSON natif en SQLite : lu, fusionné en JS,
+   *  réécrit — une seule connexion, donc sans concurrence à gérer ici. */
+  async mergeSourceConfig(
+    id: number,
+    partial: Record<string, unknown>,
+  ): Promise<void> {
+    const row = this.one<{ config: unknown }>(
+      'SELECT config FROM repository WHERE id = ?',
+      [id],
+    )
+    if (!row) return
+    const current = parseConfig({ config: row.config }).config as Record<
+      string,
+      unknown
+    >
+    this.db.run('UPDATE repository SET config = ? WHERE id = ?', [
+      JSON.stringify({ ...current, ...partial }),
+      id,
+    ])
+  }
+
   /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
    *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
   async logConnectorError(

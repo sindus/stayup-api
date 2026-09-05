@@ -364,6 +364,32 @@ export function runDataStoreConformance(
       })
     })
 
+    it('fusionne une config partielle sans écraser les clés absentes', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://merge.dev',
+        type: 'podcast',
+        config: { max_entries: 5, retention_days: 15 },
+      })
+
+      await store.mergeSourceConfig(s.id, { title: 'Mon flux' })
+
+      const after = await store.getSource(s.id)
+      expect(after?.config).toEqual({
+        max_entries: 5,
+        retention_days: 15,
+        title: 'Mon flux',
+      })
+
+      // Une deuxième fusion ne touche que la clé qu'elle porte.
+      await store.mergeSourceConfig(s.id, { title: 'Mon flux renommé' })
+      expect((await store.getSource(s.id))?.config).toEqual({
+        max_entries: 5,
+        retention_days: 15,
+        title: 'Mon flux renommé',
+      })
+    })
+
     it('consigne une erreur de collecte sans échouer', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
