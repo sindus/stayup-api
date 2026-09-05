@@ -344,6 +344,23 @@ export class MongoStore implements DataStore {
     })
   }
 
+  async deleteOldContent(
+    provider: string,
+    repositoryId: number,
+    retentionDays: number,
+  ): Promise<void> {
+    // Comparaison de chaînes ISO, comme `executed_at` est stocké — cohérent
+    // avec les autres adaptateurs.
+    const cutoff = new Date(
+      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+    ).toISOString()
+    await this.col('connector_item').deleteMany({
+      provider,
+      repository_id: repositoryId,
+      executed_at: { $lt: cutoff },
+    })
+  }
+
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     // `template` omis (undefined) : on ne touche pas à celui déjà en base.
     const set: Document = {

@@ -264,6 +264,13 @@ export interface DataStore {
     error: string,
     executedAt: string,
   ): Promise<void>
+  /** Supprime les lignes d'une source plus vieilles que `retentionDays` — le
+   *  nettoyage que chaque connector faisait lui-même après chaque run. */
+  deleteOldContent(
+    provider: string,
+    repositoryId: number,
+    retentionDays: number,
+  ): Promise<void>
 
   // ── Clés d'API des connectors (admin) ─────────────────────────────────────
 

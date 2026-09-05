@@ -42,6 +42,27 @@ connectorApiRoute.post('/:provider/register', async (c) => {
   return c.json({ success: true })
 })
 
+// POST /:provider/sources — suit une nouvelle URL (équivalent du `--add` en
+// ligne de commande d'un connector). Idempotent sur l'URL, comme avant.
+connectorApiRoute.post('/:provider/sources', async (c) => {
+  const provider = c.req.param('provider')
+  const body = await c.req.json<{ url?: string }>()
+  if (!body.url) return c.json({ error: 'url is required' }, 400)
+
+  const store = await getStore(c.env.DATABASE_URL)
+  const existing = await store.findSourceByUrl(body.url)
+  if (existing && existing.type !== provider) {
+    return c.json(
+      { error: 'This URL is already registered under another provider' },
+      409,
+    )
+  }
+  const source =
+    existing ??
+    (await store.createSource({ url: body.url, type: provider, config: {} }))
+  return c.json({ id: source.id, url: source.url }, existing ? 200 : 201)
+})
+
 // GET /:provider/sources — mes sources suivies (repository + config), pour
 // savoir quoi collecter à ce run.
 connectorApiRoute.get('/:provider/sources', async (c) => {
@@ -133,6 +154,26 @@ connectorApiRoute.post('/:provider/items', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   await store.insertContentItems(provider, items as ContentItemInput[])
   return c.json({ success: true, count: items.length }, 201)
+})
+
+// DELETE /:provider/sources/:id/old-items?retentionDays=N — purge ce que
+// chaque connector faisait lui-même après chaque run. Filtrée par `provider`
+// dans la requête elle-même : un id d'une autre provider ne supprime rien.
+connectorApiRoute.delete('/:provider/sources/:id/old-items', async (c) => {
+  const provider = c.req.param('provider')
+  const id = Number.parseInt(c.req.param('id'), 10)
+  const retentionDays = Number.parseInt(c.req.query('retentionDays') ?? '', 10)
+  if (Number.isNaN(id)) return c.json({ error: 'Source not found' }, 404)
+  if (Number.isNaN(retentionDays) || retentionDays < 0) {
+    return c.json(
+      { error: 'retentionDays must be a non-negative integer' },
+      400,
+    )
+  }
+
+  const store = await getStore(c.env.DATABASE_URL)
+  await store.deleteOldContent(provider, id, retentionDays)
+  return c.json({ success: true })
 })
 
 // POST /:provider/errors — une erreur de collecte, consignée dans `log`.

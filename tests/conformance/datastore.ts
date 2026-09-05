@@ -418,6 +418,38 @@ export function runDataStoreConformance(
       ).resolves.toBeUndefined()
     })
 
+    it('supprime les lignes plus vieilles que la rétention, garde les autres', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://retention.dev',
+        type: 'podcast',
+        config: {},
+      })
+      const now = Date.now()
+      const daysAgo = (n: number) =>
+        new Date(now - n * 24 * 60 * 60 * 1000).toISOString()
+
+      await store.insertContentItems('podcast', [
+        {
+          repositoryId: s.id,
+          content: 'vieux',
+          executedAt: daysAgo(20),
+          success: true,
+        },
+        {
+          repositoryId: s.id,
+          content: 'récent',
+          executedAt: daysAgo(1),
+          success: true,
+        },
+      ])
+
+      await store.deleteOldContent('podcast', s.id, 15)
+
+      const rest = await store.allContent('podcast')
+      expect(rest.map((r) => r.content)).toEqual(['récent'])
+    })
+
     it('enregistre un provider, idempotent, sans réécrire sortOrder', async () => {
       const store = await harness.freshStore()
       expect(await store.providerExists('podcast')).toBe(false)

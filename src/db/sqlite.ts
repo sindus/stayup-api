@@ -352,6 +352,23 @@ export class SqliteStore implements DataStore {
     )
   }
 
+  async deleteOldContent(
+    provider: string,
+    repositoryId: number,
+    retentionDays: number,
+  ): Promise<void> {
+    // Cutoff calculé en JS, au même format ISO que `executed_at` : la
+    // fonction `datetime()` de SQLite produit un format différent
+    // (espace au lieu de « T »), qui comparerait mal en chaîne.
+    const cutoff = new Date(
+      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+    ).toISOString()
+    this.db.run(
+      'DELETE FROM connector_item WHERE provider = ? AND repository_id = ? AND executed_at < ?',
+      [provider, repositoryId, cutoff],
+    )
+  }
+
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     this.ensureProviderRegistryTable()
     // `template` omis (undefined) : on ne touche pas à celui déjà en base.
