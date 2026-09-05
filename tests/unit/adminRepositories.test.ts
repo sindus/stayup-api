@@ -237,6 +237,93 @@ describe('POST /ui/repositories', () => {
   })
 })
 
+// ─── PATCH /ui/repositories/:repoId ────────────────────────────────────────────
+
+describe('PATCH /ui/repositories/:repoId', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('renames the url and updates the config', async () => {
+    // getSource ; updateSourceUrl ; updateSourceConfig
+    const sql = mockSql([[SAMPLE_REPO], [], []])
+    const res = await app.request(
+      '/ui/repositories/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: 'https://github.com/test/renamed',
+          config: { max_scraps: 9 },
+        }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect(await json(res)).toEqual({ success: true })
+    expect(sql).toHaveBeenCalledTimes(3)
+  })
+
+  it('returns 404 for an unknown repository', async () => {
+    mockSql([[]])
+    const res = await app.request(
+      '/ui/repositories/999',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ config: {} }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 409 when the new url is already taken', async () => {
+    // getSource ; updateSourceUrl (rejette avec code 23505)
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([SAMPLE_REPO])
+      .mockRejectedValueOnce(Object.assign(new Error('dup'), { code: '23505' }))
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/ui/repositories/1',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: 'https://taken.example.com' }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(409)
+  })
+
+  it('returns 404 instead of 500 for a non-numeric id', async () => {
+    const sql = mockSql([])
+    const res = await app.request(
+      '/ui/repositories/abc',
+      {
+        method: 'PATCH',
+        headers: {
+          ...(await authHeaders('admin')),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ config: {} }),
+      },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+    expect(sql).not.toHaveBeenCalled()
+  })
+})
+
 // ─── Régression : identifiant non numérique ───────────────────────────────────
 
 describe('identifiant de repository non numérique', () => {

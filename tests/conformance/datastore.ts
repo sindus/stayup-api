@@ -618,6 +618,32 @@ export function runDataStoreConformance(
       expect(after?.type).toBe('podcast')
     })
 
+    it('renomme l’URL d’une source, refuse un doublon', async () => {
+      const store = await harness.freshStore()
+      const a = await store.createSource({
+        url: 'https://rename-a.dev',
+        type: 'podcast',
+        config: { keep: true },
+      })
+      const b = await store.createSource({
+        url: 'https://rename-b.dev',
+        type: 'podcast',
+        config: {},
+      })
+
+      await store.updateSourceUrl(a.id, 'https://renamed.dev')
+      const after = await store.getSource(a.id)
+      expect(after?.url).toBe('https://renamed.dev')
+      expect(after?.config).toEqual({ keep: true })
+
+      await expect(
+        store.updateSourceUrl(a.id, 'https://rename-b.dev'),
+      ).rejects.toMatchObject({ code: '23505' })
+      // Le renommage refusé n'a pas dû faire bouger `a`.
+      expect((await store.getSource(a.id))?.url).toBe('https://renamed.dev')
+      expect((await store.getSource(b.id))?.url).toBe('https://rename-b.dev')
+    })
+
     it('compte les abonnés de chaque source', async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
