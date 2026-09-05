@@ -247,6 +247,11 @@ export interface DataStore {
     provider: string,
     repositoryId: number,
   ): Promise<string | null>
+  /** Toutes les `version` déjà connues pour cette source (jamais `null`) —
+   *  sert un connector qui doit combler des trous, pas juste reprendre après
+   *  la plus récente (ex. `changelog`, dont les releases GitHub peuvent
+   *  apparaître dans le désordre). */
+  listKnownVersions(provider: string, repositoryId: number): Promise<string[]>
   /** Les sources suivies de ce provider (pas d'état d'abonnement : c'est un
    *  connector qui appelle, pas un utilisateur). */
   listSourcesForProvider(provider: string): Promise<Source[]>

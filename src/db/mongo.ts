@@ -305,6 +305,17 @@ export class MongoStore implements DataStore {
     return (doc?.version as string | undefined) ?? null
   }
 
+  async listKnownVersions(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string[]> {
+    return this.col('connector_item').distinct('version', {
+      provider,
+      repository_id: repositoryId,
+      version: { $ne: null },
+    }) as Promise<string[]>
+  }
+
   async listSourcesForProvider(provider: string): Promise<Source[]> {
     const rows = await this.col('repository')
       .find({ type: provider })
