@@ -331,6 +331,17 @@ export class PostgresStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
+    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    if (entry.template === undefined) {
+      await this.sql`
+        INSERT INTO provider_registry (name, display_name, sort_order)
+        VALUES (${entry.name}, ${entry.displayName}, ${entry.sortOrder ?? 100})
+        ON CONFLICT (name) DO UPDATE SET
+          display_name = EXCLUDED.display_name,
+          updated_at = NOW()
+      `
+      return
+    }
     const templateValue =
       entry.template == null
         ? null
