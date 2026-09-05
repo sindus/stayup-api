@@ -21,6 +21,7 @@
  */
 
 import type { Collection, Db, Document } from 'mongodb'
+import { normalizeConfigObject } from './configShape.js'
 import type {
   AdminRow,
   ConnectorKeyRow,
@@ -312,16 +313,19 @@ export class MongoStore implements DataStore {
     return rows.map(toSource)
   }
 
-  /** Fusion superficielle via des clés en notation pointée (`config.<clé>`) :
-   *  un `$set` par clé de `partial`, atomique, sans lire-modifier-écrire. */
+  /** Lu, normalisé (voir configShape.ts), fusionné, réécrit — cohérent avec
+   *  les autres adaptateurs face à un `config` qui ne serait pas un objet. */
   async mergeSourceConfig(
     id: number,
     partial: Record<string, unknown>,
   ): Promise<void> {
-    const set = Object.fromEntries(
-      Object.entries(partial).map(([key, value]) => [`config.${key}`, value]),
+    const doc = await this.col('repository').findOne({ _id: id })
+    if (!doc) return
+    const merged = { ...normalizeConfigObject(doc.config), ...partial }
+    await this.col('repository').updateOne(
+      { _id: id },
+      { $set: { config: merged } },
     )
-    await this.col('repository').updateOne({ _id: id }, { $set: set })
   }
 
   /** `log` n'a pas de champ `provider` : elle se déduit de `repository_id`

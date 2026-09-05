@@ -7,6 +7,7 @@
  */
 
 import type postgres from 'postgres'
+import { normalizeConfigObject } from './configShape.js'
 import type {
   AdminRow,
   ConnectorKeyRow,
@@ -310,9 +311,18 @@ export class PostgresStore implements DataStore {
     id: number,
     partial: Record<string, unknown>,
   ): Promise<void> {
+    // Lu-normalisé-fusionné-réécrit plutôt qu'un `config || $1` : certaines
+    // lignes de production ont un `config` corrompu (tableau, chaîne — voir
+    // configShape.ts), sur lequel `||` composerait la corruption au lieu de
+    // fusionner. Cette voie répare la ligne au passage.
+    const [row] = await this.sql<{ config: unknown }[]>`
+      SELECT config FROM repository WHERE id = ${id}
+    `
+    if (!row) return
+    const merged = { ...normalizeConfigObject(row.config), ...partial }
     await this.sql`
       UPDATE repository
-      SET config = config || ${this.sql.json(partial as postgres.JSONValue) as never}
+      SET config = ${this.sql.json(merged as postgres.JSONValue) as never}
       WHERE id = ${id}
     `
   }
