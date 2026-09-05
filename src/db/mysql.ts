@@ -338,12 +338,13 @@ export class MysqlStore implements DataStore {
   }
 
   async listSourcesForProvider(provider: string): Promise<Source[]> {
-    return (
-      await this.all<Source>(
-        'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
-        [provider],
-      )
-    ).map(parseConfig)
+    const rows = await this.all<Source>(
+      'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
+      [provider],
+    )
+    // Normalisé (configShape.ts) : un connector ne doit jamais recevoir un
+    // `config` qui ne serait pas un objet.
+    return rows.map((r) => ({ ...r, config: normalizeConfigObject(r.config) }))
   }
 
   async mergeSourceConfig(

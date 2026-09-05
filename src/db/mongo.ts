@@ -310,7 +310,12 @@ export class MongoStore implements DataStore {
       .find({ type: provider })
       .sort({ _id: 1 })
       .toArray()
-    return rows.map(toSource)
+    // Normalisé (configShape.ts) : un connector ne doit jamais recevoir un
+    // `config` qui ne serait pas un objet.
+    return rows.map((r) => ({
+      ...toSource(r),
+      config: normalizeConfigObject(r.config),
+    }))
   }
 
   /** Lu, normalisé (voir configShape.ts), fusionné, réécrit — cohérent avec
