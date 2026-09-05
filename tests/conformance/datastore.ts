@@ -423,6 +423,30 @@ export function runDataStoreConformance(
       })
     })
 
+    it('ne touche pas au template existant quand un appel ne le fournit pas', async () => {
+      // Incident vécu : un appel `register` sans `template` (un simple test
+      // d'auth, par ex.) avait effacé le manifeste d'affichage d'un provider
+      // en prod. `template` absent de l'appel ≠ `template` explicitement nul.
+      const store = await harness.freshStore()
+      const template = { version: 1, list: { layout: 'row' } }
+      await store.registerProvider({
+        name: 'podcast',
+        displayName: 'Podcasts',
+        template,
+      })
+
+      await store.registerProvider({
+        name: 'podcast',
+        displayName: 'Podcasts renommé',
+      })
+
+      const [entry] = await store.readRegistry(['podcast'])
+      expect(entry).toMatchObject({
+        display_name: 'Podcasts renommé',
+        template,
+      })
+    })
+
     // ── Clés d'API des connectors ────────────────────────────────────────────
 
     it('suit le cycle de vie d’une clé d’API de connector', async () => {

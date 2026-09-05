@@ -213,8 +213,13 @@ export interface DataStore {
    *  uniquement — un connector ne peut pas s'auto-approuver. */
   setProviderApproval(name: string, approval: 'auto' | 'manual'): Promise<void>
   /** Auto-déclaration d'un connector au démarrage (nom affiché + template).
-   *  Idempotent : un second appel met à jour `displayName`/`template`, jamais
-   *  `sortOrder` ni `flux_approval`. Crée la ligne si elle n'existe pas. */
+   *  Idempotent : un second appel met à jour `displayName`, jamais `sortOrder`
+   *  ni `flux_approval`. `template` n'est remplacé (y compris par `null`) que
+   *  s'il est présent dans l'appel — un appel qui ne le fournit pas du tout
+   *  (`undefined`) laisse le template existant intact, pour ne pas effacer
+   *  l'affichage d'un provider sur un appel partiel (vécu en prod : un simple
+   *  test d'auth avec `{ displayName }` seul avait effacé le template de
+   *  `rss`). Crée la ligne si elle n'existe pas. */
   registerProvider(entry: ProviderRegistration): Promise<void>
 
   // ── Contenu collecté ──────────────────────────────────────────────────────

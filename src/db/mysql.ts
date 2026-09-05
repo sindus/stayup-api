@@ -368,6 +368,18 @@ export class MysqlStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
+    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    if (entry.template === undefined) {
+      await this.db.run(
+        `INSERT INTO provider_registry (name, display_name, sort_order)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           display_name = VALUES(display_name),
+           updated_at = CURRENT_TIMESTAMP(3)`,
+        [entry.name, entry.displayName, entry.sortOrder ?? 100],
+      )
+      return
+    }
     await this.db.run(
       `INSERT INTO provider_registry (name, display_name, sort_order, template)
        VALUES (?, ?, ?, ?)

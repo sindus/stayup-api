@@ -329,17 +329,20 @@ export class MongoStore implements DataStore {
   }
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
+    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    const set: Document = {
+      display_name: entry.displayName,
+      updated_at: nowIso(),
+    }
+    if (entry.template !== undefined) set.template = entry.template
     await this.col('provider_registry').updateOne(
       { _id: entry.name },
       {
-        $set: {
-          display_name: entry.displayName,
-          template: entry.template ?? null,
-          updated_at: nowIso(),
-        },
+        $set: set,
         $setOnInsert: {
           sort_order: entry.sortOrder ?? 100,
           flux_approval: 'auto',
+          ...(entry.template === undefined ? { template: null } : {}),
         },
       },
       { upsert: true },

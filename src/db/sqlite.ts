@@ -334,6 +334,18 @@ export class SqliteStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     this.ensureProviderRegistryTable()
+    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    if (entry.template === undefined) {
+      this.db.run(
+        `INSERT INTO provider_registry (name, display_name, sort_order)
+         VALUES (?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET
+           display_name = excluded.display_name,
+           updated_at = datetime('now')`,
+        [entry.name, entry.displayName, entry.sortOrder ?? 100],
+      )
+      return
+    }
     this.db.run(
       `INSERT INTO provider_registry (name, display_name, sort_order, template)
        VALUES (?, ?, ?, ?)
