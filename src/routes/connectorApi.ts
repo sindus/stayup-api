@@ -86,6 +86,20 @@ connectorApiRoute.get('/:provider/sources/:id/state', async (c) => {
   return c.json({ version })
 })
 
+// GET /:provider/sources/:id/versions — toutes les versions déjà connues pour
+// cette source (pas juste la dernière) — pour un connector qui doit combler
+// des trous plutôt que juste reprendre après la plus récente (ex. `changelog`,
+// dont les releases GitHub peuvent apparaître dans le désordre).
+connectorApiRoute.get('/:provider/sources/:id/versions', async (c) => {
+  const provider = c.req.param('provider')
+  const id = Number.parseInt(c.req.param('id'), 10)
+  if (Number.isNaN(id)) return c.json({ error: 'Source not found' }, 404)
+
+  const store = await getStore(c.env.DATABASE_URL)
+  const versions = await store.listKnownVersions(provider, id)
+  return c.json({ versions })
+})
+
 // PATCH /:provider/sources/:id/config — fusionne des clés dans la config
 // d'une source (ex. `rss` y range le titre du canal pour l'affichage).
 // Fusion, jamais un remplacement : ne touche pas aux clés absentes du corps.

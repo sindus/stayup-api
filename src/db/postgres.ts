@@ -298,6 +298,18 @@ export class PostgresStore implements DataStore {
     return row?.version ?? null
   }
 
+  async listKnownVersions(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string[]> {
+    const rows = await this.sql<{ version: string }[]>`
+      SELECT version FROM connector_item
+      WHERE provider = ${provider} AND repository_id = ${repositoryId}
+        AND version IS NOT NULL
+    `
+    return rows.map((r) => r.version)
+  }
+
   async listSourcesForProvider(provider: string): Promise<Source[]> {
     const rows = await this.sql<Source[]>`
       SELECT id, url, type, config, created_at FROM repository

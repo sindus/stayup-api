@@ -303,6 +303,16 @@ export class SqliteStore implements DataStore {
     return row?.version ?? null
   }
 
+  async listKnownVersions(
+    provider: string,
+    repositoryId: number,
+  ): Promise<string[]> {
+    return this.all<{ version: string }>(
+      'SELECT version FROM connector_item WHERE provider = ? AND repository_id = ? AND version IS NOT NULL',
+      [provider, repositoryId],
+    ).map((r) => r.version)
+  }
+
   async listSourcesForProvider(provider: string): Promise<Source[]> {
     const rows = this.all<Source>(
       'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',

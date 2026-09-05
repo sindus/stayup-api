@@ -342,6 +342,44 @@ export function runDataStoreConformance(
       expect(await store.getLastKnownVersion('podcast', s.id)).toBe('v1.1')
     })
 
+    it('liste toutes les versions connues, pas seulement la dernière', async () => {
+      const store = await harness.freshStore()
+      const s = await store.createSource({
+        url: 'https://versions.dev',
+        type: 'podcast',
+        config: {},
+      })
+
+      expect(await store.listKnownVersions('podcast', s.id)).toEqual([])
+
+      await store.insertContentItems('podcast', [
+        {
+          repositoryId: s.id,
+          version: 'v1',
+          content: 'un',
+          executedAt: '2026-01-01T00:00:00Z',
+          success: true,
+        },
+        {
+          repositoryId: s.id,
+          version: null,
+          content: 'sans version',
+          executedAt: '2026-01-02T00:00:00Z',
+          success: true,
+        },
+        {
+          repositoryId: s.id,
+          version: 'v2',
+          content: 'deux',
+          executedAt: '2026-01-03T00:00:00Z',
+          success: true,
+        },
+      ])
+
+      const versions = await store.listKnownVersions('podcast', s.id)
+      expect(new Set(versions)).toEqual(new Set(['v1', 'v2']))
+    })
+
     it('liste les sources suivies par un provider, sans état d’abonnement', async () => {
       const store = await harness.freshStore()
       await store.createSource({
