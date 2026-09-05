@@ -65,6 +65,29 @@ connectorApiRoute.get('/:provider/sources/:id/state', async (c) => {
   return c.json({ version })
 })
 
+// PATCH /:provider/sources/:id/config — fusionne des clés dans la config
+// d'une source (ex. `rss` y range le titre du canal pour l'affichage).
+// Fusion, jamais un remplacement : ne touche pas aux clés absentes du corps.
+connectorApiRoute.patch('/:provider/sources/:id/config', async (c) => {
+  const provider = c.req.param('provider')
+  const id = Number.parseInt(c.req.param('id'), 10)
+  if (Number.isNaN(id)) return c.json({ error: 'Source not found' }, 404)
+
+  const body = await c.req.json<{ config?: Record<string, unknown> }>()
+  if (typeof body.config !== 'object' || body.config === null) {
+    return c.json({ error: 'config is required' }, 400)
+  }
+
+  const store = await getStore(c.env.DATABASE_URL)
+  const source = await store.getSource(id)
+  if (!source || source.type !== provider) {
+    return c.json({ error: 'Source not found' }, 404)
+  }
+
+  await store.mergeSourceConfig(id, body.config)
+  return c.json({ success: true })
+})
+
 interface ItemPayload {
   repositoryId: number
   version?: string | null

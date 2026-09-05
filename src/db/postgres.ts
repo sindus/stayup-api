@@ -306,6 +306,17 @@ export class PostgresStore implements DataStore {
     return rows.map(repairConfig)
   }
 
+  async mergeSourceConfig(
+    id: number,
+    partial: Record<string, unknown>,
+  ): Promise<void> {
+    await this.sql`
+      UPDATE repository
+      SET config = config || ${this.sql.json(partial as postgres.JSONValue) as never}
+      WHERE id = ${id}
+    `
+  }
+
   /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
    *  (via `repository.type`) partout ailleurs. Le paramètre est gardé pour la
    *  symétrie de l'appel côté route, où une erreur peut survenir sans source

@@ -250,6 +250,13 @@ export interface DataStore {
   /** Les sources suivies de ce provider (pas d'état d'abonnement : c'est un
    *  connector qui appelle, pas un utilisateur). */
   listSourcesForProvider(provider: string): Promise<Source[]>
+  /** Fusionne (shallow merge, pas un remplacement) des clés dans
+   *  `repository.config` d'une source — ex. `rss` y range le titre du canal
+   *  pour l'affichage. Sans effet sur les clés absentes de `partial` : ne
+   *  jamais écraser `max_entries`/`retention_days` qu'un utilisateur ou un
+   *  admin a pu poser. Distinct de `updateSourceConfig` (admin), qui
+   *  remplace toute la config. */
+  mergeSourceConfig(id: number, partial: Record<string, unknown>): Promise<void>
   /** Consigne une erreur de collecte dans `log`. */
   logConnectorError(
     provider: string,
