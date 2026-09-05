@@ -350,6 +350,18 @@ export class PostgresStore implements DataStore {
     `
   }
 
+  async deleteOldContent(
+    provider: string,
+    repositoryId: number,
+    retentionDays: number,
+  ): Promise<void> {
+    await this.sql`
+      DELETE FROM connector_item
+      WHERE provider = ${provider} AND repository_id = ${repositoryId}
+        AND executed_at < NOW() - ${retentionDays} * INTERVAL '1 day'
+    `
+  }
+
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
     // `template` omis (undefined) : on ne touche pas à celui déjà en base.

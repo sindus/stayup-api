@@ -385,6 +385,19 @@ export class MysqlStore implements DataStore {
     )
   }
 
+  async deleteOldContent(
+    provider: string,
+    repositoryId: number,
+    retentionDays: number,
+  ): Promise<void> {
+    await this.db.run(
+      `DELETE FROM connector_item
+       WHERE provider = ? AND repository_id = ?
+         AND executed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [provider, repositoryId, retentionDays],
+    )
+  }
+
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
     // `template` omis (undefined) : on ne touche pas à celui déjà en base.
