@@ -304,7 +304,11 @@ export class PostgresStore implements DataStore {
       WHERE type = ${provider}
       ORDER BY id
     `
-    return rows.map(repairConfig)
+    // Normalisé (configShape.ts), pas seulement réparé (repairConfig, qui ne
+    // traite que la double sérialisation) : un connector ne doit jamais
+    // recevoir un `config` qui ne serait pas un objet, ou il ferait
+    // `config.get(...)` dessus sans y penser.
+    return rows.map((r) => ({ ...r, config: normalizeConfigObject(r.config) }))
   }
 
   async mergeSourceConfig(
