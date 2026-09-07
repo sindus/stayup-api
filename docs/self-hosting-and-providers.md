@@ -132,7 +132,7 @@ At this point `GET /connectors/providers` will return `{"providers":[]}` — tha
 
 A provider is any script that, on a schedule, asks `stayup-api` "what should I collect?" and posts back the new rows it finds. It **never touches a database** — every call goes to `/connector-api/<name>/*` over HTTP, authenticated with a connector key. `stayup-api` and the 3 client apps pick the provider up automatically — **no code change required anywhere else** — as long as you follow the contract below.
 
-Don't write the plumbing from scratch: **[`stayup-cmd-template`](https://github.com/stayup-app/stayup-cmd-template)** is a working connector with three `TODO`s to fill in. The 5 live providers (`stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`, `stayup-cmd-github-trending`) are full reference implementations; `stayup-cmd-rss` is the shortest.
+Don't start from a blank file: the **step-by-step tutorial** on the docs site (`/docs/providers/tutorial`) builds a whole connector for Hacker News from an empty folder — copy each block. The 5 live providers (`stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`, `stayup-cmd-github-trending`) are full reference implementations; `stayup-cmd-rss` is the shortest.
 
 ## Naming convention
 
