@@ -16,7 +16,7 @@ Built with [Hono](https://hono.dev), deployed on Cloudflare Workers. It stores n
 | Runtime | Node.js 22 · Cloudflare Workers |
 | Framework | Hono 4 |
 | Databases | PostgreSQL · MySQL/MariaDB · SQLite · MongoDB — one adapter each, behind a single contract |
-| Tests | Vitest — 272 tests, of which a conformance suite every adapter must pass |
+| Tests | Vitest — 285 tests, of which a conformance suite every adapter must pass |
 | Quality | Biome (lint + format) · strict TypeScript |
 | Documentation | OpenAPI 3.1 · [Scalar](https://scalar.com) UI |
 
@@ -96,23 +96,27 @@ Both apply `src/db/schema.sql` first, then insert the super admin.
 
 ## API
 
-30 application routes, all described in the OpenAPI specification served at `/openapi.json` and browsable at `/docs`.
+Every route is described in the OpenAPI specification served at `/openapi.json` and browsable at `/docs`.
 
 | Area | Routes | Access |
 |---|---|---|
 | Health | `GET /` | public |
-| Authentication | `POST /auth/register` · `POST /auth/login` · `GET /auth/oauth/{google,github}` and their callbacks | public |
-| Connectors | `GET /connectors` · `GET /connectors/:name` · `GET /connectors/providers` | authenticated |
+| Authentication | `POST /auth/register` · `POST /auth/login` · `GET /auth/me` · `GET /auth/config` · `GET /auth/oauth/{google,github}` and their callbacks | public |
+| Connectors (read) | `GET /connectors` · `GET /connectors/:name` · `GET /connectors/providers` | authenticated |
 | | `GET /connectors/latest` | admin |
-| Provider fluxes | `GET /providers/:provider/fluxes` · `POST`/`DELETE /providers/:provider/fluxes/:id/subscribe` · `POST /providers/:provider/fluxes` | authenticated |
+| Connector API (write) | `POST /connector-api/:provider/{register,sources,items,errors}` · `GET /connector-api/:provider/sources[/:id/{state,versions}]` · `PATCH /connector-api/:provider/sources/:id/config` · `DELETE /connector-api/:provider/sources/:id/old-items` | connector key |
+| Provider fluxes | `GET /providers/:provider/fluxes` · `POST`/`DELETE /providers/:provider/fluxes/:id/subscribe` | authenticated |
 | Users | `GET`/`PATCH /ui/users/:userId` · `GET /ui/users/:userId/feed[/:connector]` · `POST`/`DELETE /ui/users/:userId/repositories` | self or admin |
-| Administration | `GET`/`POST`/`DELETE /ui/users` · `/ui/repositories` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` | admin |
+| Administration | `GET`/`POST`/`DELETE` `/ui/users` · `/ui/repositories` · `/ui/data-sources` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` · `/ui/connector-keys` | admin |
 
 ### Authentication
 
-Every protected route expects an `Authorization: Bearer <jwt>` header. Tokens are valid for 24 hours.
+Two credentials coexist:
 
-Two ways to get one:
+- **Users and admins** send a JWT (`Authorization: Bearer <jwt>`), obtained from `POST /auth/login` or the OAuth flow, valid for 24 hours. The role it carries (`admin` or `user`) drives access.
+- **Connectors** send an API key (`Authorization: Bearer stayup_conn_…`) on `/connector-api/*` only. A key is scoped to a single provider — an `rss` key cannot write for `youtube` — created by an admin from `stayup-ui` (or `POST /ui/connector-keys`), shown once, and revocable (`DELETE /ui/connector-keys/:id`). See [Connectors](#connectors).
+
+Getting a JWT:
 
 ```bash
 # Admin account — the `username` field carries the admin's e-mail
@@ -126,7 +130,7 @@ curl -X POST localhost:3000/auth/login \
   -d '{"email":"alice@example.com","password":"secret"}'
 ```
 
-The role carried by the token (`admin` or `user`) drives access. Routes under `/ui/users/:userId` are open to that user as well as to admins; administration routes require the `admin` role, and managing other admins requires a super admin (`is_super`).
+Routes under `/ui/users/:userId` are open to that user as well as to admins; administration routes require the `admin` role, and managing other admins requires a super admin (`is_super`).
 
 Admins live in the `admin` table. Bootstrap the first (super) admin from the command line:
 
@@ -156,7 +160,7 @@ Admin-created users (`POST /ui/users`, `npm run create-user`) are always active,
 
 ### Flux approval
 
-Each provider carries a `flux_approval` mode in `provider_registry` (`auto` | `manual`, an admin sets it via `PATCH /ui/providers/:name`). When a user adds a flux that does not exist yet with `POST /providers/:provider/fluxes`:
+Each provider carries a `flux_approval` mode in `provider_registry` (`auto` | `manual`, an admin sets it via `PATCH /ui/providers/:name`). When a user adds a flux that does not exist yet with `POST /ui/users/:userId/repositories`:
 
 - `auto` — the source is created and the user subscribed immediately (`201`).
 - `manual` — a request is created in `pending` state (`202`). An admin then handles it with `POST /ui/flux-requests/:id/approve` — the source is created and the requester subscribed automatically — or `POST /ui/flux-requests/:id/reject`. Scraping ships as `manual`.
@@ -176,12 +180,19 @@ The API speaks to no engine directly. It calls the storage contract in
 | SQLite | `sqlite://` `file://` | `npm install better-sqlite3` | [`src/db/schema.sqlite.sql`](src/db/schema.sqlite.sql) |
 | MongoDB | `mongodb://` `mongodb+srv://` | `npm install mongodb` | none — collections are created on first write |
 
-Tables, collections and columns carry the same names whichever engine runs, so a provider
-is described once and only its dialect changes. What guarantees it is
-[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): twenty-four
+Tables, collections and columns carry the same names whichever engine runs, so the storage
+layer is described once and only its dialect changes. What guarantees it is
+[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): forty-three
 behaviours, stated without a single query or table name, that CI checks against a real
 PostgreSQL, MySQL, SQLite and MongoDB. Adding an engine means writing an adapter, passing
 that suite, and registering it in [`src/db/store.ts`](src/db/store.ts).
+
+The core tables are `repository` (a tracked source), `connector_item` (all collected
+content, one table for every provider, discriminated by a `provider` column), `user_repository`
+(subscriptions), `provider_registry` (one row per provider — display name, ordering, optional
+display template, `flux_approval` mode), `connector_key` (connector API keys) and `log`
+(connector run errors). Auth relies on the `user`, `account`, `session` and `verification`
+tables, in [Better Auth](https://better-auth.com) format — managed by `stayup-ui`.
 
 Drivers load on demand, so a PostgreSQL deployment never pulls the others in — and none of
 them reaches the Cloudflare Workers bundle, where they could not run anyway: Workers only
@@ -190,32 +201,54 @@ opens the kind of connection PostgreSQL uses, so the other three need Docker or 
 The PostgreSQL schema is applied automatically when the container first starts and when
 functional tests run.
 
+## Connectors
+
+A connector (e.g. `stayup-cmd-changelog`, `stayup-cmd-rss`, `stayup-cmd-youtube`) is an
+independent project that collects one kind of source and **talks to this API over HTTP** —
+it never touches the database. Everything it does goes through `/connector-api/:provider/*`,
+authenticated with a provider-scoped [connector key](#authentication):
+
+- `POST …/register` — declare the display name, sort order and display template on every
+  run (idempotent).
+- `POST …/sources` / `GET …/sources` — follow a URL / list the ones to collect.
+- `GET …/sources/:id/state` and `…/versions` — the last known version, or every known
+  version, so the connector knows where to resume.
+- `PATCH …/sources/:id/config` — shallow-merge keys into a source's config (e.g. `rss`
+  stores the channel title there for labelling).
+- `POST …/items` — write a batch of collected rows into `connector_item`.
+- `DELETE …/sources/:id/old-items?retentionDays=N` — prune old rows.
+- `POST …/errors` — record a collection failure in `log`.
+
+The API never hardcodes a provider name: a provider **exists** as soon as it has a row in
+`provider_registry` or any content in `connector_item`. Its display name and optional
+display **template** (`provider_registry.template`, a JSON manifest the apps render from —
+relayed untouched, never parsed here) come from `provider_registry`. Adding a provider — and
+how it looks in the apps — is therefore data only, no code to touch in `stayup-api`. See
+`GET /connectors/providers` for the list, `docs/display-templates.md` for the template
+reference, and `docs/self-hosting-and-providers.md` for the full connector contract.
+
 ### Secondary data sources
 
 `DATABASE_URL` is the **primary** database — users, admins, subscriptions, the provider
-registry, plus whatever connectors write locally. An admin can attach **secondary**
-databases that hold only `connector_*` tables, so one instance aggregates feeds from
-several sources:
+registry, plus whatever the primary instance's connectors write. An admin can attach
+**secondary** databases (same shape — `connector_item` + `provider_registry`), so one
+instance aggregates feeds collected against several databases:
 
 - `GET /ui/data-sources` — the primary (engine + host, never the password) and every
   secondary.
 - `POST /ui/data-sources/test` — `{url}` → `{ ok, engine, connectors }` without saving.
-- `POST /ui/data-sources` — `{name, url}` → re-tests, refuses a database with no
-  `connector_*` table, then stores the URL **encrypted at rest** (AES-GCM, key derived
-  from `JWT_SECRET` — see [`src/db/secretbox.ts`](src/db/secretbox.ts)).
+- `POST /ui/data-sources` — `{name, url}` → re-tests, refuses a database that exposes no
+  provider, then stores the URL **encrypted at rest** (AES-GCM, key derived from
+  `JWT_SECRET` — see [`src/db/secretbox.ts`](src/db/secretbox.ts)).
 - `DELETE /ui/data-sources/:id` — removes it and, in cascade, the external subscriptions
   that pointed at it.
 
-Secondary databases are **read-only**: the API only reads their `connector_*` content.
+Secondary databases are **read-only**: the API only reads their collected content.
 `GET /connectors/providers` merges providers by name across all databases; a feed row from
 a secondary carries `_data_source_id` / `_data_source_name`. A user subscribes to a
 secondary flux through the normal `POST /providers/:provider/fluxes/:id/subscribe` with
 `{ "dataSourceId": <n> }` in the body (`external_subscription` table, keyed by URL). An
 unreachable secondary is skipped, never fatal.
-
-Each provider is an independent project (e.g. `stayup-cmd-changelog`, `stayup-cmd-youtube`) that owns and creates its own `connector_<name>` table, attached to a `repository`. Subscriptions go through `user_repository`. The API never hardcodes a provider name: it discovers `connector_*` tables — or, under MongoDB, `connector_*` collections — and reads their display name, and an optional display **template** (`provider_registry.template`, a JSON manifest the apps render from — relayed untouched, never parsed here), from `provider_registry`, which each provider upserts a row into on startup. Adding or removing a provider — and how it looks in the apps — is therefore a database-only change — no code to touch in `stayup-api`. See `GET /connectors/providers` for the discovered list and `docs/display-templates.md` for the complete template reference.
-
-Authentication relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — these are managed by `stayup-ui`.
 
 ## Tests
 

@@ -15,25 +15,29 @@ dans ces apps**.
 
 ## 1. Où vit le template, et le repli « aucun template »
 
-Le template est un **objet JSON** dans la colonne `provider_registry.template`
-(`JSONB` Postgres, `JSON` MySQL, TEXT-JSON SQLite, champ de document MongoDB).
-Ton collecteur l'`upsert` à chaque exécution, dans la même requête que son nom
-affiché :
+Le template est un **objet JSON**. Ton collecteur l'envoie à `stayup-api` à chaque
+exécution, dans le corps de `POST /connector-api/<name>/register`, à côté de son
+nom affiché :
 
-```sql
-ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;  -- idempotent
-
-INSERT INTO provider_registry (name, display_name, sort_order, template)
-VALUES ('podcast', 'Podcasts', 60, '<le JSON>'::jsonb)
-ON CONFLICT (name) DO UPDATE SET
-  display_name = EXCLUDED.display_name,
-  template     = EXCLUDED.template,
-  updated_at   = NOW();
+```jsonc
+POST /connector-api/podcast/register
+Authorization: Bearer stayup_conn_…
+{
+  "displayName": "Podcasts",
+  "sortOrder": 60,
+  "template": { /* l'objet ci-dessous */ }
+}
 ```
 
-En pratique (Python), on garde un dict `DISPLAY_TEMPLATE` et on passe
-`json.dumps(DISPLAY_TEMPLATE)` en paramètre — les 5 connecteurs `stayup-cmd-*` font
-exactement ça (`stayup-cmd-github-trending/fetch_trending.py` est la référence).
+`stayup-api` le range tel quel dans la colonne `provider_registry.template`
+(`JSONB` Postgres, `JSON` MySQL, TEXT-JSON SQLite, champ de document MongoDB) — le
+connecteur ne touche jamais la base. `template` n'est remplacé que s'il est
+présent dans le corps : un `register` qui ne l'envoie pas laisse le template
+existant intact.
+
+En pratique (Python), on garde un dict `DISPLAY_TEMPLATE` et on le passe dans le
+JSON du `register` — les 5 connecteurs `stayup-cmd-*` font exactement ça
+(`stayup-cmd-github-trending/fetch_trending.py` est la référence).
 
 > **Si un provider n'a pas de template** (colonne `NULL`, JSON illisible, ou
 > `version` non reconnue), les apps affichent le **contenu brut** :

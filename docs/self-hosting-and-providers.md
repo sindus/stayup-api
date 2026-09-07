@@ -10,8 +10,8 @@ Read the architecture summary below first — both parts build on it.
 
 ## How the pieces fit together
 
-- **`stayup-api`** is a thin, stateless HTTP layer over a single PostgreSQL database. It never hardcodes a provider name. On every request it asks Postgres "which `connector_*` tables exist right now, and what display name did each one register in `provider_registry`?" — that answer *is* the list of providers.
-- **A provider** is an independent script/project (Python today, could be anything) that owns exactly one table, `connector_<name>`, and writes rows into it on a schedule (cron, GitHub Actions, whatever you like). It never talks to `stayup-api` directly — it talks to the same Postgres database.
+- **`stayup-api`** is a thin, stateless HTTP layer over a database you own (PostgreSQL, MySQL/MariaDB, SQLite or MongoDB — one adapter each). It never hardcodes a provider name: a provider *exists* as soon as it has a row in `provider_registry` or any content in the shared `connector_item` table. That set *is* the list of providers, and each row's `display_name` / `template` is what the apps render from.
+- **A provider** is an independent script/project (Python today, could be anything) that collects one kind of source on a schedule (cron, GitHub Actions, whatever you like) and **talks to `stayup-api` over HTTP** — it never touches the database. It authenticates with a *connector key*, created by an admin and scoped to that one provider, and calls `/connector-api/<name>/*` to register itself, list its sources, and push new rows.
 - **The 3 client apps** (`stayup-ui`, `stayup-desktop`, `stayup-mobile`) never hardcode an API URL either. Each one has a *default* API (the one at `https://stayup-api.r-sik.workers.dev`, or whatever `STAYUP_API_URL` a `stayup-ui` deployment sets), but every user can override it from their profile/settings screen to point at any other `stayup-api` instance — which means any other database, with entirely different providers and data.
 
 One consequence worth stating plainly: **there is no coordination between instances.** If you self-host, you get an empty database and zero providers until you run at least one collector against it. Nothing is shared with the "official" instance.
@@ -130,7 +130,9 @@ At this point `GET /connectors/providers` will return `{"providers":[]}` — tha
 
 # Part 2 — Building a new provider
 
-A provider is any script that periodically writes rows describing "new content" into its own Postgres table. `stayup-api` and the 3 client apps will pick it up automatically — **no code change required anywhere else** — as long as you follow the contract below. The 4 existing providers (`stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`) are full reference implementations; skim one of them (`stayup-cmd-rss` is the shortest) alongside this doc.
+A provider is any script that, on a schedule, asks `stayup-api` "what should I collect?" and posts back the new rows it finds. It **never touches a database** — every call goes to `/connector-api/<name>/*` over HTTP, authenticated with a connector key. `stayup-api` and the 3 client apps pick the provider up automatically — **no code change required anywhere else** — as long as you follow the contract below.
+
+Don't write the plumbing from scratch: **[`stayup-cmd-template`](https://github.com/stayup-app/stayup-cmd-template)** is a working connector with three `TODO`s to fill in. The 5 live providers (`stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`, `stayup-cmd-github-trending`) are full reference implementations; `stayup-cmd-rss` is the shortest.
 
 ## Naming convention
 
@@ -138,127 +140,77 @@ Pick a short, lowercase, `snake_case`-safe name for your provider — e.g. `podc
 
 | Where | Example for `podcast` |
 |---|---|
-| Your data table | `connector_podcast` |
+| The API path your script calls | `/connector-api/podcast/...` |
 | `repository.type` (which sources are yours) | `'podcast'` |
 | `provider_registry.name` (your display name) | `'podcast'` → e.g. display name `'Podcasts'` |
 
-There is no registry of names to reserve ahead of time — the name simply *is* whatever you create the table as. Two providers can't collide unless they literally pick the same table name.
+There is no registry of names to reserve ahead of time — the name simply *is* the one your connector key is scoped to and the one you `register`. Two providers can't collide unless they literally pick the same name.
 
-## The 4 tables involved
+## Getting a connector key
 
-Your `init_db()` (or equivalent, run at the start of every execution) must ensure these exist. All statements are `CREATE TABLE IF NOT EXISTS` / `INSERT ... ON CONFLICT DO UPDATE` — idempotent, safe to run every single time, safe even if another provider already created the shared ones.
+An admin creates it once, from `stayup-ui`'s admin area → **Connector keys → New key**, provider = your name (or `POST /ui/connector-keys` with `{ "provider": "<name>", "name": "<label>" }`). The secret (`stayup_conn_…`) is shown **once** — copy it immediately. It can be revoked at any time without affecting anything else. You can create the key before the connector has ever run; registering the name and issuing its key are independent.
 
-**1. `repository` — shared, you only read from it (plus one upsert for `--add`)**
+Your script then needs two environment variables:
 
-```sql
-CREATE TABLE IF NOT EXISTS repository (
-    id          SERIAL PRIMARY KEY,
-    url         TEXT NOT NULL UNIQUE,
-    type        TEXT NOT NULL,
-    config      JSONB NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
+- `STAYUP_API_URL` — the instance you report to (e.g. `https://stayup-api.<sub>.workers.dev`).
+- `STAYUP_API_KEY` — the `stayup_conn_…` secret above. It travels as `Authorization: Bearer <key>`.
 
-Each row is one thing to track — a podcast feed URL, a subreddit, whatever your provider means by "a source". `type` must equal your provider name. `config` is free-form JSON your script defines and interprets (e.g. `{"retention_days": 15}`).
+## The HTTP contract
 
-**2. `connector_<name>` — yours, you own it entirely**
+All routes are under `/connector-api/<name>/` and require the `Authorization: Bearer <STAYUP_API_KEY>` header. A key only works for its own provider.
 
-Minimum required columns:
+| Call | Purpose |
+|---|---|
+| `POST /register` — `{ displayName, sortOrder?, template? }` | Announce yourself. Idempotent — call it on **every run**. `sortOrder` is not overwritten once set; `template` is only replaced when the key is present in the body. |
+| `POST /sources` — `{ url }` | Follow a new URL. Idempotent on the URL. `201` when created, `200` when it already existed, `409` if another provider owns it. |
+| `GET /sources` → `{ sources: [{ id, url, config }] }` | Your list of sources to collect this run. |
+| `GET /sources/:id/state` → `{ version }` | The last stored version for that source (`null` on the first run) — where to resume. |
+| `GET /sources/:id/versions` → `{ versions: [...] }` | Every version already stored — for a connector that back-fills gaps rather than just resuming after the newest (e.g. `changelog`). |
+| `PATCH /sources/:id/config` — `{ config: {...} }` | Shallow-merge keys into the source's config (e.g. `rss` stores the channel title for labelling). Never a full replace. |
+| `POST /items` — `{ items: [{ repositoryId, content, executedAt, success, version?, datetime?, params? }] }` | Write a **batch** of collected rows. `content` is an opaque string (see below). `201`. |
+| `DELETE /sources/:id/old-items?retentionDays=N` | Prune rows older than `N` days for that source. |
+| `POST /errors` — `{ error, executedAt, repositoryId? }` | Record a collection failure. It lands in the API's `log` table. |
 
-```sql
-CREATE TABLE IF NOT EXISTS connector_<name> (
-    id            SERIAL PRIMARY KEY,
-    repository_id INTEGER NOT NULL REFERENCES repository(id),
-    content       TEXT NOT NULL,
-    executed_at   TIMESTAMPTZ NOT NULL,
-    success       BOOLEAN NOT NULL
-);
-```
+### The item shape
 
-Recognized optional columns (the API's "latest per source" queries use them when present, but don't require them):
+- `repositoryId` (required) — the `id` from `GET /sources`.
+- `content` (required) — an opaque string. Plain text, or a JSON string — **your choice**; `stayup-api` never parses it. `youtube`/`rss` use small JSON payloads (`{"title", "link", …}`) so the apps can render a title, thumbnail, etc.
+- `executedAt` (required) — ISO timestamp of this run.
+- `success` (required) — boolean.
+- `version` (optional) — the dedupe key: a run stops storing as soon as it meets a version it already knows (compare against `GET /sources/:id/state`). Also shown next to rich renders (release tag, video id…).
+- `datetime` (optional) — the content's own timestamp (publish date), preferred over `executedAt` for "what's newest".
+- `params` (optional) — free-form JSON; only `scrap` uses it today.
 
-- `datetime TIMESTAMPTZ` — the content's own timestamp (e.g. publish date), preferred over `executed_at` for sorting "what's newest" when present.
-- `version TEXT` — a short label shown next to rich renders (release tag, video id, etc.).
+## What your script does on each run
 
-You may add any other columns you need (`diff`, `params jsonb`, …) — nothing outside the API reads them, they're yours.
+1. `POST /register` with your display name (and template, if any).
+2. `GET /sources` → your list.
+3. For each source: `GET /sources/:id/state` (or `/versions`), fetch from the external service, keep only items newer than what's stored, `POST /items` with the batch.
+4. `DELETE /sources/:id/old-items?retentionDays=N` using whatever config key you defined (e.g. `config.retention_days`).
+5. On a per-source failure: `POST /errors` and move on — don't abort the whole run.
 
-**3. `provider_registry` — shared, you upsert exactly one row for yourself**
-
-```sql
-CREATE TABLE IF NOT EXISTS provider_registry (
-    name          TEXT PRIMARY KEY,
-    display_name  TEXT NOT NULL,
-    sort_order    INTEGER NOT NULL DEFAULT 100,
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-INSERT INTO provider_registry (name, display_name, sort_order)
-VALUES ('<name>', '<Display Name>', <order>)
-ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW();
-```
-
-`sort_order` only affects display ordering across providers in the client apps; pick any integer (the 4 existing providers use 10/20/30/40). If you skip this table entirely, your provider still works — `stayup-api` falls back to a capitalized version of the table name (`podcast` → `Podcast`) as the display name.
-
-**4. `log` — shared, optional but recommended**
-
-```sql
-CREATE TABLE IF NOT EXISTS log (
-    id            SERIAL PRIMARY KEY,
-    repository_id INTEGER,
-    error         TEXT NOT NULL,
-    executed_at   TIMESTAMPTZ NOT NULL
-);
-```
-
-Write here instead of crashing when one source fails — keep processing the others.
-
-## What your script actually does on each run
-
-1. Connect, run the idempotent DDL above (`init_db`).
-2. `SELECT id, url, config FROM repository WHERE type = '<name>' ORDER BY id` — your list of sources to check.
-3. For each source: fetch from the external service, compare against what's already stored (typically: the most recent successful row for that `repository_id`) to avoid re-inserting the same content, `INSERT` new rows into `connector_<name>`.
-4. Respect `config.retention_days` (or whatever config keys you define) to prune old rows: `DELETE FROM connector_<name> WHERE repository_id = %s AND executed_at < NOW() - %s * INTERVAL '1 day'`.
-5. On any per-source failure, write to `log` and move on to the next source rather than aborting the whole run.
-
-Support a `--add <url>` CLI flag that just upserts a `repository` row and exits — this is how sources get seeded directly against the database. The alternative (and the one end users actually use) is adding a source through the API itself: `POST /ui/users/:userId/repositories` with `{"provider": "<name>", "url": "...", "config": {...}}` — `provider` must equal your table suffix.
-
-## Content conventions and the generic-fallback caveat
-
-`content` can be plain text or a JSON string — your choice. The 4 existing providers use small JSON payloads for `youtube`/`rss` (`{"title", "link", ...}`) so the client apps can render a title, thumbnail, etc. **A provider that ships no display template has no rich render** — the 3 apps show it with a generic card (first ~80 characters of `content`, the date, your `display_name`). That's fully functional, just visually plain.
+Support a `--add <url>` CLI flag that just calls `POST /sources` and exits — that's how you seed sources from the command line. End users add a source from the apps instead: `POST /ui/users/:userId/repositories` with `{"provider": "<name>", "url": "...", "config": {...}}`, which routes through the auto/manual approval flow.
 
 ## Display templates — a rich render with no app code
 
-Instead of adding a renderer component to each of the 3 apps, a provider **declares how its rows should look** as JSON in `provider_registry.template`. The apps read it from `GET /connectors/providers` and render list entries and the reading pane from it directly. A new provider gets thumbnails, audio players, image galleries, tables, HTML bodies, "open" buttons — without a single line changed in `stayup-ui` / `stayup-desktop` / `stayup-mobile`.
+Instead of adding a renderer component to each of the 3 apps, a provider **declares how its rows should look** as a JSON manifest, passed as `template` in `POST /register`. `stayup-api` stores it in `provider_registry.template` and relays it untouched to the apps via `GET /connectors/providers`; it never parses or validates it. A provider gets thumbnails, audio players, image galleries, tables, HTML bodies, "open" buttons — without a line changed in `stayup-ui` / `stayup-desktop` / `stayup-mobile`.
 
-Upsert it in the same statement that registers your display name:
-
-```sql
-ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;
-
-INSERT INTO provider_registry (name, display_name, sort_order, template)
-VALUES ('<name>', '<Display Name>', <order>, '<template json>'::jsonb)
-ON CONFLICT (name) DO UPDATE SET
-  display_name = EXCLUDED.display_name,
-  template     = EXCLUDED.template,
-  updated_at   = NOW();
-```
-
-`stayup-api` relays the value untouched — it never parses or validates it. It is **optional**: omit it (or the whole column) and nothing breaks — the apps then show the **raw content** (first ~80 chars of `content` + date in the list; `content` verbatim as text in the reading pane).
+It is **optional**. With no template, the apps show the **raw content**: the first ~80 chars of `content` + the date in the list, `content` verbatim in the reading pane. Fully functional, just plain.
 
 **The full authoring reference — every field, every mode (`text`, `html`, `media`, `audio`, `gallery`, `table`, `link-list`), the accessor mini-language, recipes and the web-vs-mobile differences — is in [`display-templates.md`](display-templates.md).** `stayup-cmd-github-trending/fetch_trending.py` is the worked reference (`mode: table`); the other four `stayup-cmd-*` collectors each ship one too.
 
 ## Running it on a schedule
 
-Copy the pattern from any `stayup-cmd-*` repo: a `Dockerfile`, a `daily.yml` GitHub Actions workflow (`schedule: cron`) that runs the script with `DATABASE_URL` as a secret pointed at the same Postgres your `stayup-api` uses. Nothing about StayUp requires GitHub Actions specifically — any scheduler (systemd timer, plain cron, another CI) works identically.
+Copy the pattern from any `stayup-cmd-*` repo: a `Dockerfile` and a `daily.yml` GitHub Actions workflow (`schedule: cron`) that runs the script with `STAYUP_API_URL` and `STAYUP_API_KEY` as repository secrets. Nothing about StayUp requires GitHub Actions specifically — any scheduler (systemd timer, plain cron, another CI) works identically.
 
 ## Checklist before you consider it done
 
-- [ ] `connector_<name>` created with at least `id`, `repository_id`, `content`, `executed_at`, `success`.
-- [ ] `provider_registry` row upserted on every run (with a `template` if you want a rich render — optional).
-- [ ] `repository` rows read with `WHERE type = '<name>'`.
-- [ ] Old entries pruned according to `config.retention_days` (or documented if you don't support retention).
-- [ ] Per-source errors logged to `log` instead of crashing the run.
+- [ ] A connector key exists for your provider name, and your script reads `STAYUP_API_URL` / `STAYUP_API_KEY`.
+- [ ] `POST /register` is called on every run (with a `template` if you want a rich render — optional).
+- [ ] Sources come from `GET /sources`; `--add` calls `POST /sources`.
+- [ ] New rows are sent with `POST /items`, deduped against `GET /sources/:id/state`.
+- [ ] Old entries pruned via `DELETE /sources/:id/old-items` (or documented if you don't support retention).
+- [ ] Per-source failures sent to `POST /errors` instead of crashing the run.
 - [ ] `GET /connectors/providers` on your `stayup-api` instance shows your provider after one run.
 - [ ] `GET /connectors/<name>` returns your data.
 
@@ -270,68 +222,69 @@ Below are ready-to-paste briefs, one per diagram. Each is self-contained — han
 
 ## Diagram 1 — "Overall architecture" (system diagram)
 
-**Purpose:** show, at a glance, that providers, the API, and the client apps are three independently-deployable layers connected only through Postgres and HTTP.
+**Purpose:** show, at a glance, that providers, the API, and the client apps are three independently-deployable layers, all connected only through `stayup-api`'s HTTP surface.
 
 **Type:** boxes-and-arrows system/architecture diagram, left-to-right or top-to-bottom.
 
 **Elements (as distinct boxes, left to right or top to bottom):**
-1. A group/cluster labeled "Providers (independent scripts, one per source type)" containing 4+ small boxes: `stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`, and one dashed/ghosted extra box labeled "your new provider…" to signal extensibility.
-2. A single central box: **PostgreSQL** — inside it, list 4 sub-items as small labeled sections: `repository` (shared), `connector_*` (one per provider), `provider_registry` (shared), `log` (shared).
-3. A box: **stayup-api** (label it "stateless — discovers providers from Postgres at request time").
+1. A group/cluster labeled "Providers (independent scripts, one per source type)" containing 5+ small boxes: `stayup-cmd-changelog`, `stayup-cmd-youtube`, `stayup-cmd-rss`, `stayup-cmd-scrap`, `stayup-cmd-github-trending`, and one dashed/ghosted extra box labeled "your new provider…" to signal extensibility.
+2. A box: **stayup-api** (label it "stateless — discovers providers at request time"). Show two labelled ports on it: `/connector-api/*` (key auth, write) and `/connectors`, `/providers`, `/ui/*` (JWT auth, read).
+3. A single box behind the API: **Database (PostgreSQL / MySQL / SQLite / MongoDB)** — inside it, list sub-items: `repository`, `connector_item` (all providers, one table), `provider_registry`, `connector_key`, `log`, plus the auth tables.
 4. A group/cluster labeled "Client apps" containing 3 boxes: `stayup-ui` (web), `stayup-desktop`, `stayup-mobile`.
 5. Outside/below the whole diagram, a small icon/person labeled "end user".
 
 **Connections:**
-- Each provider box → arrow → PostgreSQL, labeled "writes (cron)".
-- PostgreSQL ↔ stayup-api, bidirectional arrow, labeled "reads/writes over SQL".
-- stayup-api → each of the 3 client app boxes, arrow labeled "HTTP (configurable URL)".
+- Each provider box → arrow → stayup-api `/connector-api/*` port, labeled "HTTP + connector key (cron)".
+- stayup-api ↔ Database, bidirectional arrow, labeled "reads/writes via one adapter".
+- stayup-api → each of the 3 client app boxes, arrow labeled "HTTP + user JWT (configurable URL)".
 - End user ↔ the 3 client apps.
 
-**Annotation to include somewhere on the canvas:** "Any client app can be pointed at any stayup-api instance → any Postgres database. There is one 'official' instance; self-hosting is a parallel, disconnected stack of the same shape."
+**Annotation to include somewhere on the canvas:** "Nothing but `stayup-api` touches the database. Any client app — and any connector — can be pointed at any `stayup-api` instance. There is one 'official' instance; self-hosting is a parallel, disconnected stack of the same shape."
 
-## Diagram 2 — "The provider contract" (entity/ownership diagram)
+## Diagram 2 — "The connector contract" (interaction diagram)
 
-**Purpose:** make crystal clear which tables a new provider script must touch, and how (read vs. write vs. upsert-one-row).
+**Purpose:** make crystal clear which API calls a new connector makes, and in what role (announce / read / write).
 
-**Type:** a single box "Your provider script" in the center, with 4 arrows fanning out to 4 table boxes.
+**Type:** a single box "Your connector script" in the center, with arrows fanning out to grouped `/connector-api/<name>/*` endpoints. No database box — the connector never sees one.
 
 **Elements:**
-- Center box: **"Your provider script (e.g. `connector_podcast`)"**.
-- Table box A: **`repository`** — subtitle "shared, read-only for you (+ upsert if you support `--add`)". Show its columns: `id, url, type, config, created_at`.
-- Table box B: **`connector_<name>`** (highlight this one, e.g. different color/border) — subtitle "yours — created & owned entirely by you". Show columns: `id, repository_id, content, executed_at, success` as required (bold), and `datetime, version, …` as optional (lighter/dashed).
-- Table box C: **`provider_registry`** — subtitle "shared — you upsert exactly ONE row (your own name)". Show columns: `name (PK), display_name, sort_order, updated_at`.
-- Table box D: **`log`** — subtitle "shared, optional — write on error, don't crash". Show columns: `id, repository_id, error, executed_at`.
+- Center box: **"Your connector script (name = `podcast`)"**, with a small tag "auth: `Authorization: Bearer stayup_conn_…` — scoped to `podcast`".
+- Endpoint group A — **Announce**: `POST /register` — subtitle "every run, idempotent — displayName, sortOrder?, template?".
+- Endpoint group B — **Read**: `GET /sources`, `GET /sources/:id/state`, `GET /sources/:id/versions` — subtitle "what to collect, and from where to resume".
+- Endpoint group C (highlight this one) — **Write**: `POST /items` (batch of rows into `connector_item`), `PATCH /sources/:id/config`, `DELETE /sources/:id/old-items`, `POST /errors`.
+- Endpoint group D — **Seed**: `POST /sources` — subtitle "the `--add <url>` flag".
 
 **Connections (label each arrow with the verb):**
-- Center → A: "READ (`WHERE type = '<name>'`)"
-- Center → B: "READ + WRITE (full ownership)"
-- Center → C: "UPSERT (1 row, `ON CONFLICT DO UPDATE`)"
-- Center → D: "WRITE (on error)"
+- Center → A: "ANNOUNCE (display name + template)"
+- Center → B: "READ (sources + resume point)"
+- Center → C: "WRITE (new rows, config merge, retention, errors)"
+- Center → D: "SEED (follow a new URL)"
 
-**Annotation:** "Never write into another provider's `connector_*` table, or into `user` / `session` / `account` / `user_repository` — those belong to stayup-api / stayup-ui."
+**Annotation:** "The connector holds no database credentials and knows no table names. `stayup-api` maps `provider = 'podcast'` to rows in the shared `connector_item` table; a `podcast` key can only act under `/connector-api/podcast/*`."
 
 ## Diagram 3 — "End-to-end data flow" (sequence diagram)
 
 **Purpose:** trace one piece of content from an external source to a user's screen.
 
-**Type:** sequence diagram with 5 lifelines/actors, left to right: **External source** (e.g. YouTube), **Provider script**, **PostgreSQL**, **stayup-api**, **Client app**.
+**Type:** sequence diagram with 5 lifelines/actors, left to right: **External source** (e.g. YouTube), **Connector script**, **stayup-api**, **Database**, **Client app**.
 
 **Steps in order (numbered arrows):**
-1. Provider script → External source: "poll for new content (cron trigger)"
-2. External source → Provider script: "new item"
-3. Provider script → PostgreSQL: "INSERT INTO connector_<name>"
-4. Provider script → PostgreSQL: "UPSERT provider_registry row"
-5. *(later, on a user opening the app)* Client app → stayup-api: "GET /connectors/providers"
-6. stayup-api → PostgreSQL: "list connector_* tables (information_schema) + join provider_registry"
-7. PostgreSQL → stayup-api: "provider list + display names"
-8. stayup-api → Client app: "[{name, displayName}, …]"
-9. Client app → stayup-api: "GET /ui/users/:id/feed"
-10. stayup-api → PostgreSQL: "query each connector_* table dynamically"
-11. PostgreSQL → stayup-api: "rows"
-12. stayup-api → Client app: "{ connectors: { <name>: [...], … } }"
-13. Client app → Client app (self-arrow/note): "known provider → rich render · unknown provider → generic card"
+1. Connector script → External source: "poll for new content (cron trigger)"
+2. External source → Connector script: "new item"
+3. Connector script → stayup-api: "POST /connector-api/<name>/register"
+4. Connector script → stayup-api: "GET /connector-api/<name>/sources"
+5. Connector script → stayup-api: "POST /connector-api/<name>/items (batch)"
+6. stayup-api → Database: "INSERT INTO connector_item (provider = <name>, …)"
+7. *(later, on a user opening the app)* Client app → stayup-api: "GET /connectors/providers"
+8. stayup-api → Database: "provider_registry rows ∪ DISTINCT provider FROM connector_item"
+9. Database → stayup-api: "provider list + display names + templates"
+10. stayup-api → Client app: "[{name, displayName, template}, …]"
+11. Client app → stayup-api: "GET /ui/users/:id/feed"
+12. stayup-api → Database: "latest connector_item rows per subscribed source"
+13. stayup-api → Client app: "{ connectors: { <name>: [...], … } }"
+14. Client app → Client app (self-arrow/note): "has template → rich render · none → generic card"
 
-**Annotation:** split steps 1-4 into a shaded region labeled "runs on a schedule, independent of any user activity" and steps 5-13 into a region labeled "runs when a user opens the app".
+**Annotation:** split steps 1-6 into a shaded region labeled "runs on a schedule, independent of any user activity" and steps 7-14 into a region labeled "runs when a user opens the app".
 
 ## Diagram 4 — "Switching API instances" (comparison diagram)
 
@@ -340,8 +293,8 @@ Below are ready-to-paste briefs, one per diagram. Each is self-contained — han
 **Type:** two side-by-side stacked columns ("Instance A" and "Instance B"), plus one shared client app box with a toggle.
 
 **Elements:**
-- Column A, top to bottom: **"stayup-api (Instance A)"** → **"PostgreSQL A"** → small list "providers: changelog, youtube".
-- Column B, top to bottom: **"stayup-api (Instance B — self-hosted)"** → **"PostgreSQL B"** → small list "providers: podcast, hackernews".
+- Column A, top to bottom: **"stayup-api (Instance A)"** → **"Database A"** → small list "providers: changelog, youtube".
+- Column B, top to bottom: **"stayup-api (Instance B — self-hosted)"** → **"Database B"** → small list "providers: podcast, hackernews".
 - Center/below: one box **"stayup-desktop / mobile / ui"** with a visible settings control labeled **"API URL: [ instance-a.example.com ▾ ]"**.
 - Two dashed arrows from the client app box: one to Instance A labeled "currently connected", one to Instance B labeled "→ switch here instead".
 
@@ -349,4 +302,4 @@ Below are ready-to-paste briefs, one per diagram. Each is self-contained — han
 
 ---
 
-**Suggested visual language for all 4 diagrams:** keep provider-owned elements (provider script boxes, `connector_*` table, provider_registry row) in one accent color, and API/shared-infrastructure elements (stayup-api, `repository`, `log`, PostgreSQL itself) in a neutral/second color, so the "who owns what" story reads even before anyone reads a label.
+**Suggested visual language for all 4 diagrams:** keep connector-owned elements (connector script boxes, `/connector-api/*` calls, the `provider_registry` row) in one accent color, and API/shared-infrastructure elements (stayup-api, `repository`, `connector_item`, `log`, the database itself) in a neutral/second color, so the "who owns what" story reads even before anyone reads a label.
