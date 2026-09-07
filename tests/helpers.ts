@@ -13,6 +13,7 @@ export const TEST_ENV: Bindings = {
   GITHUB_CLIENT_SECRET: 'github-client-secret',
   REGISTRATION_MODE: 'open',
   INSTANCE_NAME: '',
+  CLEANUP_SECRET: 'test-cleanup-secret',
 }
 
 export async function bearerToken(

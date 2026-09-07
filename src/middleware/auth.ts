@@ -100,6 +100,41 @@ export const providerScope = (c: Context): string | null => {
   return key?.provider ?? null
 }
 
+/**
+ * Accès à `POST /ui/maintenance/cleanup` : un admin (JWT) OU le porteur du
+ * secret `CLEANUP_SECRET`. Le cron de nettoyage n'est pas une session : il ne
+ * peut pas tenir un JWT de 24 h, d'où ce secret long, posé côté serveur, envoyé
+ * en `Authorization: Bearer`. Comparaison en temps constant. Si `CLEANUP_SECRET`
+ * n'est pas configuré, seul le chemin admin reste ouvert.
+ */
+export const requireAdminOrCleanupSecret = async (c: Context, next: Next) => {
+  const env = c.env as Bindings
+  const header = c.req.header('Authorization') ?? ''
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+
+  if (
+    env.CLEANUP_SECRET &&
+    token &&
+    timingSafeEqual(token, env.CLEANUP_SECRET)
+  ) {
+    await next()
+    return
+  }
+
+  return authMiddleware(c, async () => {
+    const forbidden = await requireAdmin(c, next)
+    if (forbidden) c.res = forbidden
+  })
+}
+
+/** Comparaison à durée constante de deux chaînes courtes. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
 export const requireSelfOrAdmin = async (c: Context, next: Next) => {
   const payload = c.get('jwtPayload') as { sub?: string; role?: string }
   if (payload?.role === 'admin') {

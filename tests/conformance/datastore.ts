@@ -488,6 +488,86 @@ export function runDataStoreConformance(
       expect(rest.map((r) => r.content)).toEqual(['récent'])
     })
 
+    it('purge centralisée : défaut global, surcharge par provider, et « off »', async () => {
+      const store = await harness.freshStore()
+      const now = Date.now()
+      const daysAgo = (n: number) =>
+        new Date(now - n * 24 * 60 * 60 * 1000).toISOString()
+
+      const mk = async (type: string) => {
+        const s = await store.createSource({
+          url: `https://${type}.dev`,
+          type,
+          config: {},
+        })
+        await store.insertContentItems(type, [
+          {
+            repositoryId: s.id,
+            content: 'vieux',
+            executedAt: daysAgo(20),
+            success: true,
+          },
+          {
+            repositoryId: s.id,
+            content: 'récent',
+            executedAt: daysAgo(1),
+            success: true,
+          },
+        ])
+        return s
+      }
+      await mk('podcast')
+      await mk('reddit')
+      await mk('hackernews')
+      // podcast et reddit ont besoin d'une ligne de registre pour porter une surcharge.
+      await store.registerProvider({ name: 'reddit', displayName: 'Reddit' })
+      await store.registerProvider({ name: 'hackernews', displayName: 'HN' })
+
+      // défaut intégré (30 j) tant que rien n'est posé
+      expect(await store.getContentRetentionDefault()).toBe(30)
+      await store.setContentRetentionDefault(15)
+      expect(await store.getContentRetentionDefault()).toBe(15)
+
+      // reddit garde 90 j (rien ne tombe), hackernews suit le défaut (15 j).
+      await store.setProviderRetention('reddit', 90)
+
+      const report = await store.purgeExpiredContent()
+      const byProvider = Object.fromEntries(
+        report.map((r) => [r.provider, r.deleted]),
+      )
+      // podcast : pas de ligne de registre → suit le défaut, la vieille tombe
+      expect(byProvider.podcast).toBe(1)
+      // hackernews : suit le défaut, la vieille tombe
+      expect(byProvider.hackernews).toBe(1)
+      // reddit : surcharge 90 j, rien ne tombe (donc pas listé ou 0)
+      expect(byProvider.reddit ?? 0).toBe(0)
+
+      expect((await store.allContent('podcast')).map((r) => r.content)).toEqual(
+        ['récent'],
+      )
+      expect(
+        (await store.allContent('reddit')).map((r) => r.content).sort(),
+      ).toEqual(['récent', 'vieux'])
+
+      // « off » désactive toute purge automatique.
+      await store.setContentRetentionDefault(null)
+      expect(await store.getContentRetentionDefault()).toBe(null)
+      await store.setProviderRetention('reddit', null)
+      // Remet du vieux contenu et vérifie que la passe suivante ne touche rien.
+      const hn = await store.findSourceByUrl('https://hackernews.dev')
+      if (!hn) throw new Error('source hackernews introuvable')
+      await store.insertContentItems('hackernews', [
+        {
+          repositoryId: hn.id,
+          content: 'très vieux',
+          executedAt: daysAgo(40),
+          success: true,
+        },
+      ])
+      const report2 = await store.purgeExpiredContent()
+      expect(report2).toEqual([])
+    })
+
     it('enregistre un provider, idempotent, sans réécrire sortOrder', async () => {
       const store = await harness.freshStore()
       expect(await store.providerExists('podcast')).toBe(false)

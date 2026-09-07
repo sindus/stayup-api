@@ -61,6 +61,12 @@ function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
     sort_order: row.sort_order,
     flux_approval: row.flux_approval === 'manual' ? 'manual' : 'auto',
   }
+  // `retention_days` n'apparaît que si un admin en a posé une : sinon le
+  // provider suit le défaut global, et la clé reste absente.
+  const retention = Number(row.retention_days)
+  if (Number.isFinite(retention) && row.retention_days != null) {
+    base.retention_days = retention
+  }
   if (row.template == null) return base
   if (typeof row.template !== 'string')
     return { ...base, template: row.template }
@@ -86,7 +92,14 @@ export class PostgresStore implements DataStore {
            name TEXT PRIMARY KEY, display_name TEXT NOT NULL,
            sort_order INTEGER NOT NULL DEFAULT 100, template JSONB,
            flux_approval TEXT NOT NULL DEFAULT 'auto',
+           retention_days INTEGER,
            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      )
+      .catch(() => {})
+    // Registre créé par une version antérieure : la colonne peut manquer.
+    await this.sql
+      .unsafe(
+        'ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER',
       )
       .catch(() => {})
   }
@@ -149,15 +162,16 @@ export class PostgresStore implements DataStore {
     try {
       return (
         await this.sql<RegistryEntry[]>`
-          SELECT name, display_name, sort_order, template, flux_approval
+          SELECT name, display_name, sort_order, template, flux_approval, retention_days
           FROM provider_registry
           WHERE name = ANY(${names})
         `
       ).map(normalizeRegistryRow)
     } catch (err) {
       // `42703` = colonne absente : registre antérieur à `template` /
-      // `flux_approval`, qu'aucune migration n'a encore retouché. On relit avec
-      // le sous-ensemble minimal plutôt que de perdre les noms affichés.
+      // `flux_approval` / `retention_days`, qu'aucune migration n'a encore
+      // retouché. On relit avec le sous-ensemble minimal plutôt que de perdre
+      // les noms affichés.
       if ((err as { code?: string }).code === '42703') {
         return this.sql<RegistryEntry[]>`
           SELECT name, display_name, sort_order
@@ -376,6 +390,72 @@ export class PostgresStore implements DataStore {
       WHERE provider = ${provider} AND repository_id = ${repositoryId}
         AND executed_at < NOW() - ${retentionDays} * INTERVAL '1 day'
     `
+  }
+
+  // ── Maintenance : rétention du contenu ────────────────────────────────────
+
+  private async ensureAppSettingTable(): Promise<void> {
+    await this.sql
+      .unsafe(
+        'CREATE TABLE IF NOT EXISTS app_setting (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+      )
+      .catch(() => {})
+  }
+
+  async getContentRetentionDefault(): Promise<number | null> {
+    const rows = await this.sql<{ value: string }[]>`
+      SELECT value FROM app_setting WHERE key = 'content_retention_days'
+    `.catch(() => [] as { value: string }[])
+    if (rows.length === 0) return 30 // défaut intégré
+    const n = Number(rows[0].value)
+    return Number.isFinite(n) && n > 0 ? n : null // '', 'off', 0… → pas de purge
+  }
+
+  async setContentRetentionDefault(days: number | null): Promise<void> {
+    await this.ensureAppSettingTable()
+    await this.sql`
+      INSERT INTO app_setting (key, value)
+      VALUES ('content_retention_days', ${days === null ? 'off' : String(days)})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `
+  }
+
+  async setProviderRetention(name: string, days: number | null): Promise<void> {
+    await this.sql
+      .unsafe(
+        'ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER',
+      )
+      .catch(() => {})
+    await this.sql`
+      UPDATE provider_registry SET retention_days = ${days} WHERE name = ${name}
+    `
+  }
+
+  async purgeExpiredContent(): Promise<
+    { provider: string; deleted: number }[]
+  > {
+    const globalDefault = await this.getContentRetentionDefault()
+    const names = await this.listProviderNames()
+    if (names.length === 0) return []
+
+    const overrides = new Map(
+      (await this.readRegistry(names)).map((r) => [r.name, r.retention_days]),
+    )
+
+    const report: { provider: string; deleted: number }[] = []
+    for (const provider of names) {
+      const override = overrides.get(provider)
+      const days = override != null ? override : globalDefault
+      if (days == null || days <= 0) continue
+
+      const res = await this.sql`
+        DELETE FROM connector_item
+        WHERE provider = ${provider}
+          AND executed_at < NOW() - ${days} * INTERVAL '1 day'
+      `
+      report.push({ provider, deleted: res.count })
+    }
+    return report
   }
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {

@@ -180,6 +180,10 @@ export class MongoStore implements DataStore {
       }
       // `template` n'est relayé que si le provider en a déclaré un.
       if (r.template != null) entry.template = r.template
+      const retention = Number(r.retention_days)
+      if (Number.isFinite(retention) && r.retention_days != null) {
+        entry.retention_days = retention
+      }
       return entry
     })
   }
@@ -375,6 +379,61 @@ export class MongoStore implements DataStore {
       repository_id: repositoryId,
       executed_at: { $lt: cutoff },
     })
+  }
+
+  // ── Maintenance : rétention du contenu ────────────────────────────────────
+
+  async getContentRetentionDefault(): Promise<number | null> {
+    const row = await this.col('app_setting').findOne({
+      _id: 'content_retention_days',
+    })
+    if (!row) return 30
+    const n = Number(row.value)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+
+  async setContentRetentionDefault(days: number | null): Promise<void> {
+    await this.col('app_setting').updateOne(
+      { _id: 'content_retention_days' },
+      { $set: { value: days === null ? 'off' : String(days) } },
+      { upsert: true },
+    )
+  }
+
+  async setProviderRetention(name: string, days: number | null): Promise<void> {
+    await this.col('provider_registry').updateOne(
+      { _id: name },
+      { $set: { retention_days: days } },
+    )
+  }
+
+  async purgeExpiredContent(): Promise<
+    { provider: string; deleted: number }[]
+  > {
+    const globalDefault = await this.getContentRetentionDefault()
+    const names = await this.listProviderNames()
+    if (names.length === 0) return []
+
+    const overrides = new Map(
+      (await this.readRegistry(names)).map((r) => [r.name, r.retention_days]),
+    )
+
+    const report: { provider: string; deleted: number }[] = []
+    for (const provider of names) {
+      const override = overrides.get(provider)
+      const days = override != null ? override : globalDefault
+      if (days == null || days <= 0) continue
+
+      const cutoff = new Date(
+        Date.now() - days * 24 * 60 * 60 * 1000,
+      ).toISOString()
+      const res = await this.col('connector_item').deleteMany({
+        provider,
+        executed_at: { $lt: cutoff },
+      })
+      report.push({ provider, deleted: res.deletedCount ?? 0 })
+    }
+    return report
   }
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {

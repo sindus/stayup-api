@@ -16,7 +16,7 @@ Built with [Hono](https://hono.dev), deployed on Cloudflare Workers. It stores n
 | Runtime | Node.js 22 · Cloudflare Workers |
 | Framework | Hono 4 |
 | Databases | PostgreSQL · MySQL/MariaDB · SQLite · MongoDB — one adapter each, behind a single contract |
-| Tests | Vitest — 285 tests, of which a conformance suite every adapter must pass |
+| Tests | Vitest — 295 tests, of which a conformance suite every adapter must pass |
 | Quality | Biome (lint + format) · strict TypeScript |
 | Documentation | OpenAPI 3.1 · [Scalar](https://scalar.com) UI |
 
@@ -56,6 +56,7 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 | `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
 | `REGISTRATION_MODE` | `open` | `open`: sign-ups activate immediately. `approval`: sign-ups queue for an admin — see [Registration modes](#registration-modes) |
 | `INSTANCE_NAME` | — | Human-readable name for this instance, exposed by `GET /auth/config`. Apps use it as the default label when a user adds this instance as a secondary API |
+| `CLEANUP_SECRET` | — | Shared secret that lets the cleanup cron call `POST /ui/maintenance/cleanup` without an admin JWT. Empty → only an admin can trigger the purge |
 
 On Cloudflare Workers these are set with `wrangler secret put <NAME>`.
 
@@ -107,7 +108,8 @@ Every route is described in the OpenAPI specification served at `/openapi.json` 
 | Connector API (write) | `POST /connector-api/:provider/{register,sources,items,errors}` · `GET /connector-api/:provider/sources[/:id/{state,versions}]` · `PATCH /connector-api/:provider/sources/:id/config` · `DELETE /connector-api/:provider/sources/:id/old-items` | connector key |
 | Provider fluxes | `GET /providers/:provider/fluxes` · `POST`/`DELETE /providers/:provider/fluxes/:id/subscribe` | authenticated |
 | Users | `GET`/`PATCH /ui/users/:userId` · `GET /ui/users/:userId/feed[/:connector]` · `POST`/`DELETE /ui/users/:userId/repositories` | self or admin |
-| Administration | `GET`/`POST`/`DELETE` `/ui/users` · `/ui/repositories` · `/ui/data-sources` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` · `/ui/connector-keys` | admin |
+| Administration | `GET`/`POST`/`DELETE` `/ui/users` · `/ui/repositories` · `/ui/data-sources` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` · `/ui/connector-keys` · `GET`/`PATCH /ui/maintenance/retention` | admin |
+| Maintenance | `POST /ui/maintenance/cleanup` | admin **or** `CLEANUP_SECRET` |
 
 ### Authentication
 
@@ -182,7 +184,7 @@ The API speaks to no engine directly. It calls the storage contract in
 
 Tables, collections and columns carry the same names whichever engine runs, so the storage
 layer is described once and only its dialect changes. What guarantees it is
-[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): forty-three
+[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): forty-four
 behaviours, stated without a single query or table name, that CI checks against a real
 PostgreSQL, MySQL, SQLite and MongoDB. Adding an engine means writing an adapter, passing
 that suite, and registering it in [`src/db/store.ts`](src/db/store.ts).
@@ -190,9 +192,11 @@ that suite, and registering it in [`src/db/store.ts`](src/db/store.ts).
 The core tables are `repository` (a tracked source), `connector_item` (all collected
 content, one table for every provider, discriminated by a `provider` column), `user_repository`
 (subscriptions), `provider_registry` (one row per provider — display name, ordering, optional
-display template, `flux_approval` mode), `connector_key` (connector API keys) and `log`
-(connector run errors). Auth relies on the `user`, `account`, `session` and `verification`
-tables, in [Better Auth](https://better-auth.com) format — managed by `stayup-ui`.
+display template, `flux_approval` mode, `retention_days` override), `connector_key` (connector
+API keys), `app_setting` (instance settings such as the global content-retention default) and
+`log` (connector run errors). Auth relies on the `user`, `account`, `session` and
+`verification` tables, in [Better Auth](https://better-auth.com) format — managed by
+`stayup-ui`.
 
 Drivers load on demand, so a PostgreSQL deployment never pulls the others in — and none of
 them reaches the Cloudflare Workers bundle, where they could not run anyway: Workers only
@@ -216,8 +220,11 @@ authenticated with a provider-scoped [connector key](#authentication):
 - `PATCH …/sources/:id/config` — shallow-merge keys into a source's config (e.g. `rss`
   stores the channel title there for labelling).
 - `POST …/items` — write a batch of collected rows into `connector_item`.
-- `DELETE …/sources/:id/old-items?retentionDays=N` — prune old rows.
 - `POST …/errors` — record a collection failure in `log`.
+
+Connectors no longer prune old content themselves. `DELETE …/sources/:id/old-items` still
+works for older connector versions, but retention is now an **instance setting** — see
+[Content retention](#content-retention).
 
 The API never hardcodes a provider name: a provider **exists** as soon as it has a row in
 `provider_registry` or any content in `connector_item`. Its display name and optional
@@ -226,6 +233,24 @@ relayed untouched, never parsed here) come from `provider_registry`. Adding a pr
 how it looks in the apps — is therefore data only, no code to touch in `stayup-api`. See
 `GET /connectors/providers` for the list, `docs/display-templates.md` for the template
 reference, and `docs/self-hosting-and-providers.md` for the full connector contract.
+
+### Content retention
+
+Collected rows in `connector_item` are pruned centrally, not by the connectors. An admin
+sets the policy and a scheduled job pulls the trigger:
+
+- `GET /ui/maintenance/retention` — the global default (in days, or `null` for "keep
+  forever") and each provider's optional override.
+- `PATCH /ui/maintenance/retention` — `{ default?: number | null, providers?: { "<name>":
+  number | null } }`. Per-provider `retention_days` lives in `provider_registry`; the global
+  default lives in `app_setting` (built-in default: **30 days**).
+- `POST /ui/maintenance/cleanup` — deletes every provider's expired content in one pass
+  (override if set, else the global default; a provider whose effective retention is `null`
+  is left alone). Accepts an **admin JWT** or `Authorization: Bearer $CLEANUP_SECRET`.
+
+`stayup-api` ships `.github/workflows/cleanup.yml`, a daily scheduled workflow that calls
+`POST /ui/maintenance/cleanup` with `CLEANUP_SECRET` — set the `STAYUP_API_URL` and
+`CLEANUP_SECRET` repository secrets to enable it (or run cleanup from any other cron).
 
 ### Secondary data sources
 

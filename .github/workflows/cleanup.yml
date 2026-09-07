@@ -1,0 +1,29 @@
+name: Content cleanup
+
+# Prunes expired connector content on the target instance. Retention is an
+# admin setting (global default + optional per-provider override) — this job
+# only pulls the trigger, the API does the deleting.
+#
+# Repository secrets required:
+#   STAYUP_API_URL   e.g. https://stayup-api.<sub>.workers.dev
+#   CLEANUP_SECRET   same value as the API's CLEANUP_SECRET env var
+
+on:
+  schedule:
+    - cron: "40 3 * * *" # daily, 03:40 UTC
+  workflow_dispatch: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the purge
+        run: |
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' \
+            -X POST "$STAYUP_API_URL/ui/maintenance/cleanup" \
+            -H "Authorization: Bearer $CLEANUP_SECRET")
+          echo "HTTP $code"; cat /tmp/out.json; echo
+          test "$code" = "200"
+        env:
+          STAYUP_API_URL: ${{ secrets.STAYUP_API_URL }}
+          CLEANUP_SECRET: ${{ secrets.CLEANUP_SECRET }}

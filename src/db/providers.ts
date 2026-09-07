@@ -15,6 +15,9 @@ export interface Provider {
   template?: unknown
   /** `auto` (ajout de flux immédiat) ou `manual` (demande à valider par un admin). */
   flux_approval: 'auto' | 'manual'
+  /** Surcharge de rétention du contenu, en jours, posée par un admin. Absent =
+   *  le provider suit le défaut global de l'instance (voir /ui/maintenance). */
+  retention_days?: number
 }
 
 function capitalize(name: string): string {
@@ -60,13 +63,16 @@ export async function listProviders(store: DataStore): Promise<Provider[]> {
       sortOrder: meta.get(name)?.sort_order ?? 999,
       template: meta.get(name)?.template ?? null,
       flux_approval: meta.get(name)?.flux_approval ?? 'auto',
+      retention_days: meta.get(name)?.retention_days,
     }))
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-    .map(({ name, displayName, template, flux_approval }) =>
-      // La clé `template` n'apparaît que si le provider en déclare un : les
-      // consommateurs (et les tests) qui l'ignorent voient la forme d'avant.
-      template == null
-        ? { name, displayName, flux_approval }
-        : { name, displayName, template, flux_approval },
-    )
+    .map(({ name, displayName, template, flux_approval, retention_days }) => {
+      // Les clés `template` / `retention_days` n'apparaissent que si elles sont
+      // posées : les consommateurs (et les tests) qui les ignorent voient la
+      // forme d'avant.
+      const p: Provider = { name, displayName, flux_approval }
+      if (template != null) p.template = template
+      if (retention_days != null) p.retention_days = retention_days
+      return p
+    })
 }

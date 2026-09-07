@@ -35,6 +35,7 @@ One consequence worth stating plainly: **there is no coordination between instan
 | `UI_URL` | yes | Public URL of your `stayup-ui` deployment. Used as the OAuth redirect target. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables "Sign in with Google". Leave empty to disable. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | no | Enables "Sign in with GitHub". Leave empty to disable. |
+| `CLEANUP_SECRET` | no | Lets the cleanup cron call `POST /ui/maintenance/cleanup` without an admin JWT (`Authorization: Bearer <this>`). See [Content retention](#content-retention). |
 
 Email/password auth always works regardless of the OAuth variables.
 
@@ -126,6 +127,28 @@ At this point `GET /connectors/providers` will return `{"providers":[]}` — tha
 - **stayup-ui**: set `STAYUP_API_URL` on your deployment, or leave the default instance's `STAYUP_API_URL` alone and let individual visitors override it from `/profile` (stored per-browser, in a cookie).
 - **stayup-desktop / stayup-mobile**: open the app → Profile → "API URL" → paste your instance's URL → Save. "Reset to default" goes back to the built-in default at any time.
 
+## Content retention
+
+Every connector run appends rows to `connector_item`. They are pruned by the **instance**,
+not the connectors: an admin picks the policy, a scheduled job runs the delete.
+
+- **Global default** — a number of days, or "keep forever". Built-in default: **30 days**.
+  Stored in the `app_setting` table (`content_retention_days`).
+- **Per-provider override** — optional, stored in `provider_registry.retention_days`. A
+  provider with no override follows the global default.
+- **The API** — `GET`/`PATCH /ui/maintenance/retention` read and set both (admin only);
+  `POST /ui/maintenance/cleanup` runs one purge pass across every provider and returns the
+  row count deleted per provider. Cleanup accepts an admin JWT **or**
+  `Authorization: Bearer $CLEANUP_SECRET`.
+- **The schedule** — `stayup-api` ships `.github/workflows/cleanup.yml`, a daily workflow
+  that `curl`s `POST /ui/maintenance/cleanup` with `CLEANUP_SECRET`. Enable it by adding
+  `STAYUP_API_URL` and `CLEANUP_SECRET` as repository secrets, or trigger the endpoint from
+  any other cron.
+
+The admin web UI exposes all of this under **`/admin/maintenance`**. On MySQL or SQLite,
+`retention_days` and `app_setting` are part of the fresh schema — an existing database needs
+the column and table added by hand (the statements are in the `schema.*.sql` comments).
+
 ---
 
 # Part 2 — Building a new provider
@@ -168,8 +191,13 @@ All routes are under `/connector-api/<name>/` and require the `Authorization: Be
 | `GET /sources/:id/versions` → `{ versions: [...] }` | Every version already stored — for a connector that back-fills gaps rather than just resuming after the newest (e.g. `changelog`). |
 | `PATCH /sources/:id/config` — `{ config: {...} }` | Shallow-merge keys into the source's config (e.g. `rss` stores the channel title for labelling). Never a full replace. |
 | `POST /items` — `{ items: [{ repositoryId, content, executedAt, success, version?, datetime?, params? }] }` | Write a **batch** of collected rows. `content` is an opaque string (see below). `201`. |
-| `DELETE /sources/:id/old-items?retentionDays=N` | Prune rows older than `N` days for that source. |
 | `POST /errors` — `{ error, executedAt, repositoryId? }` | Record a collection failure. It lands in the API's `log` table. |
+
+> **Retention is not the connector's job anymore.** Pruning old rows is an instance
+> setting an admin controls (a global default plus optional per-provider overrides) and a
+> scheduled job triggers — see [Content retention](#content-retention) in Part 1.
+> `DELETE /sources/:id/old-items?retentionDays=N` still exists for older connectors, but a
+> new one should not call it.
 
 ### The item shape
 
@@ -186,8 +214,11 @@ All routes are under `/connector-api/<name>/` and require the `Authorization: Be
 1. `POST /register` with your display name (and template, if any).
 2. `GET /sources` → your list.
 3. For each source: `GET /sources/:id/state` (or `/versions`), fetch from the external service, keep only items newer than what's stored, `POST /items` with the batch.
-4. `DELETE /sources/:id/old-items?retentionDays=N` using whatever config key you defined (e.g. `config.retention_days`).
-5. On a per-source failure: `POST /errors` and move on — don't abort the whole run.
+4. On a per-source failure: `POST /errors` and move on — don't abort the whole run.
+
+No cleanup step: old rows are pruned centrally by the instance (see [Content
+retention](#content-retention)), so a fresh connector just keeps a bounded number of items
+per run and lets the instance forget the rest.
 
 Support a `--add <url>` CLI flag that just calls `POST /sources` and exits — that's how you seed sources from the command line. End users add a source from the apps instead: `POST /ui/users/:userId/repositories` with `{"provider": "<name>", "url": "...", "config": {...}}`, which routes through the auto/manual approval flow.
 
@@ -209,7 +240,6 @@ Copy the pattern from any `stayup-cmd-*` repo: a `Dockerfile` and a `daily.yml` 
 - [ ] `POST /register` is called on every run (with a `template` if you want a rich render — optional).
 - [ ] Sources come from `GET /sources`; `--add` calls `POST /sources`.
 - [ ] New rows are sent with `POST /items`, deduped against `GET /sources/:id/state`.
-- [ ] Old entries pruned via `DELETE /sources/:id/old-items` (or documented if you don't support retention).
 - [ ] Per-source failures sent to `POST /errors` instead of crashing the run.
 - [ ] `GET /connectors/providers` on your `stayup-api` instance shows your provider after one run.
 - [ ] `GET /connectors/<name>` returns your data.

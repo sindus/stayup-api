@@ -34,7 +34,18 @@ CREATE TABLE IF NOT EXISTS provider_registry (
   template      JSON,
   -- 'auto' : ajout de flux immédiat ; 'manual' : demande à valider par un admin.
   flux_approval VARCHAR(16) NOT NULL DEFAULT 'auto',
+  -- Surcharge de rétention du contenu (jours) posée par un admin. NULL = suit le
+  -- défaut global (app_setting.content_retention_days). Sur une base existante :
+  --   ALTER TABLE provider_registry ADD COLUMN retention_days INT NULL;
+  retention_days INT NULL,
   updated_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+-- Réglages d'instance qu'un admin modifie et qui n'ont pas leur propre table.
+-- Aujourd'hui : content_retention_days (défaut global de rétention, en jours).
+CREATE TABLE IF NOT EXISTS app_setting (
+  `key` VARCHAR(64) PRIMARY KEY,
+  value TEXT NOT NULL
 );
 
 -- ─── Contenu collecté par les providers ──────────────────────────────────────

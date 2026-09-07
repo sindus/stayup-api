@@ -58,6 +58,13 @@ export interface RegistryEntry {
    * admin). Absent → `auto` (colonne `flux_approval` pas encore présente).
    */
   flux_approval?: 'auto' | 'manual'
+  /**
+   * Surcharge de rétention du contenu de ce provider, en jours, posée par un
+   * admin (colonne `provider_registry.retention_days`). Absent → le provider
+   * suit le défaut global de l'instance. Sert à la purge centralisée
+   * (`purgeExpiredContent`), pas aux connectors.
+   */
+  retention_days?: number
 }
 
 export interface SubscriptionRow {
@@ -269,13 +276,35 @@ export interface DataStore {
     error: string,
     executedAt: string,
   ): Promise<void>
-  /** Supprime les lignes d'une source plus vieilles que `retentionDays` — le
-   *  nettoyage que chaque connector faisait lui-même après chaque run. */
+  /** Supprime les lignes d'une source plus vieilles que `retentionDays`.
+   *  Ancien mécanisme, piloté par le connector à chaque run — remplacé par la
+   *  purge centralisée (`purgeExpiredContent`). Conservé pour ne pas casser un
+   *  connector d'une version antérieure. */
   deleteOldContent(
     provider: string,
     repositoryId: number,
     retentionDays: number,
   ): Promise<void>
+
+  // ── Maintenance : rétention du contenu (admin / cron) ─────────────────────
+  // La purge n'est plus déclenchée par les connectors : un admin fixe un défaut
+  // global et, au besoin, une surcharge par provider ; un cron appelle
+  // `purgeExpiredContent`.
+
+  /** Défaut global de rétention du contenu, en jours. `null` = purge
+   *  automatique désactivée (rien n'est jamais supprimé). Défaut intégré : 30. */
+  getContentRetentionDefault(): Promise<number | null>
+  /** Fixe le défaut global. `null` désactive la purge automatique. */
+  setContentRetentionDefault(days: number | null): Promise<void>
+  /** Fixe la surcharge de rétention d'un provider. `null` = suivre le défaut
+   *  global. Sans effet si le provider n'a pas de ligne de registre. */
+  setProviderRetention(name: string, days: number | null): Promise<void>
+  /** Supprime le contenu expiré de tous les providers en une passe : chacun
+   *  avec sa surcharge `retention_days` si elle est posée, sinon le défaut
+   *  global. Un provider dont la rétention effective est `null` ou ≤ 0 est
+   *  laissé intact. Renvoie le nombre de lignes supprimées par provider
+   *  (seulement ceux effectivement purgés). */
+  purgeExpiredContent(): Promise<{ provider: string; deleted: number }[]>
 
   // ── Clés d'API des connectors (admin) ─────────────────────────────────────
 

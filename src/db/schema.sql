@@ -24,11 +24,27 @@ CREATE TABLE IF NOT EXISTS provider_registry (
   -- 'auto'  : l'ajout d'un flux par un utilisateur crée la source immédiatement.
   -- 'manual': l'ajout crée une demande à valider par un admin (voir flux_request).
   flux_approval TEXT NOT NULL DEFAULT 'auto',
+  -- Surcharge de rétention du contenu (jours), posée par un admin. NULL = le
+  -- provider suit le défaut global (app_setting.content_retention_days). Sert à
+  -- la purge centralisée, voir routes/maintenance.ts.
+  retention_days INTEGER,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Registre antérieur à la colonne `template` : on l'ajoute sans rien réécrire.
 ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;
+
+-- Registre antérieur à `retention_days` : ajout idempotent.
+ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+
+-- ─── Réglages d'instance ─────────────────────────────────────────────────────
+-- Petit KV pour ce qu'un admin règle et qui n'a pas sa propre table. Aujourd'hui
+-- une seule clé : `content_retention_days` (défaut global de rétention du
+-- contenu, en jours ; 'off' = purge automatique désactivée ; absent = 30).
+CREATE TABLE IF NOT EXISTS app_setting (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 -- Colonne `flux_approval` : ajoutée une seule fois. `scrap` est semé en 'manual'
 -- au moment de la création de la colonne uniquement — pour ne jamais réécrire un

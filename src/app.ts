@@ -11,6 +11,7 @@ import { connectorApiRoute } from './routes/connectorApi.js'
 import { connectorsRoute } from './routes/connectors.js'
 import { dataSourcesRoute } from './routes/dataSources.js'
 import { fluxRequestsAdminRoute } from './routes/fluxRequests.js'
+import { maintenanceRoute } from './routes/maintenance.js'
 import { oauthRoute } from './routes/oauth.js'
 import { providerFluxesRoute } from './routes/providerFluxes.js'
 import { uiUsersRoute } from './routes/uiUsers.js'
@@ -33,6 +34,7 @@ app.route('/ui/providers', adminProvidersRoute)
 app.route('/ui/repositories', adminRepositoriesRoute)
 app.route('/ui/flux-requests', fluxRequestsAdminRoute)
 app.route('/ui/connector-keys', adminConnectorKeysRoute)
+app.route('/ui/maintenance', maintenanceRoute)
 
 app.get('/openapi.json', (c) => c.json(openApiSpec))
 app.get(

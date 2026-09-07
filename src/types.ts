@@ -13,6 +13,10 @@ export type Bindings = {
    *  servent comme libellé par défaut d'une instance ajoutée. Optionnel :
    *  absent sur Workers si le secret n'est pas posé. */
   INSTANCE_NAME?: string
+  /** Secret partagé qui autorise `POST /ui/maintenance/cleanup` sans JWT admin
+   *  — c'est ce que le cron de nettoyage (GitHub Actions) envoie en
+   *  `Authorization: Bearer`. Absent → seul un admin peut déclencher la purge. */
+  CLEANUP_SECRET?: string
 }
 
 /** Mode d'inscription effectif : tout ce qui n'est pas 'approval' vaut 'open'. */
