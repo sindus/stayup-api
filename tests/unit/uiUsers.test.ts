@@ -289,7 +289,7 @@ describe('POST /ui/users/:userId/repositories', () => {
 
   it('reuses an existing repository without rewriting its type or config', async () => {
     const sql = mockSql([
-      [{ id: 7, type: 'changelog' }], // SELECT repository (déjà présent)
+      [{ id: 7, type: 'changelog' }], // SELECT repository (already present)
       [{ id: 'link-1', repository_id: 7, created_at: 'now' }], // INSERT user_repository
     ])
     const res = await app.request(
@@ -309,8 +309,8 @@ describe('POST /ui/users/:userId/repositories', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(201)
-    // Aucun INSERT INTO repository : la ligne partagée reste intacte.
-    // call[0] est la TemplateStringsArray du tag SQL : String() la recolle.
+    // No INSERT INTO repository: the shared row stays intact.
+    // call[0] is the SQL tag's TemplateStringsArray: String() joins it back.
     const statements = sql.mock.calls.map((call) => String(call[0]))
     expect(statements.some((q) => q.includes('INSERT INTO repository'))).toBe(
       false,
@@ -559,13 +559,13 @@ describe('Pending sign-ups (approval mode)', () => {
   })
 })
 
-// ─── Régression : PATCH ne contenant que `password` ───────────────────────────
+// ─── Regression: PATCH containing only `password` ───────────────────────────
 
-describe('PATCH /ui/users/:userId — utilisateur inexistant', () => {
+describe('PATCH /ui/users/:userId — nonexistent user', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 404 when the body only carries a password', async () => {
-    mockSql([[]]) // SELECT "user" → aucun résultat
+    mockSql([[]]) // SELECT "user" → no result
     const res = await app.request(
       '/ui/users/inconnu',
       {
@@ -600,7 +600,7 @@ describe('PATCH /ui/users/:userId — utilisateur inexistant', () => {
   })
 })
 
-// ─── Création d'utilisateur (admin) ───────────────────────────────────────────
+// ─── User creation (admin) ───────────────────────────────────────────────────
 
 describe('POST /ui/users', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -705,7 +705,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 404 for an unknown connector', async () => {
-    // providerExists : ni dans provider_registry, ni dans connector_item.
+    // providerExists: neither in provider_registry nor in connector_item.
     const sql = mockSql([[], []])
     const res = await app.request(
       '/ui/users/1/feed/inconnu',
@@ -720,9 +720,9 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   it('returns the connector items for a subscribed user', async () => {
     mockSql([
       [{ table_name: 'connector_rss' }], // getTableForProvider
-      [{ repository_id: 3 }], // repositories de l'utilisateur
+      [{ repository_id: 3 }], // the user's repositories
       [{ column_name: 'repository_id' }], // getRepositoryFkColumn
-      [{ id: 10, repository_id: 3, content: 'entrée rss' }], // sql.unsafe
+      [{ id: 10, repository_id: 3, content: 'rss entry' }], // sql.unsafe
     ])
     const res = await app.request(
       '/ui/users/1/feed/rss',
@@ -738,7 +738,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   it('returns an empty list when the user has no repository of that type', async () => {
     mockSql([
       [{ table_name: 'connector_youtube' }], // getTableForProvider
-      [], // repositories de l'utilisateur : aucun
+      [], // the user's repositories: none
     ])
     const res = await app.request(
       '/ui/users/1/feed/youtube',
@@ -750,7 +750,7 @@ describe('GET /ui/users/:userId/feed/:connector', () => {
   })
 })
 
-// ─── Désabonnement / purge ────────────────────────────────────────────────────
+// ─── Unsubscribe / purge ─────────────────────────────────────────────────────
 
 describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -765,9 +765,9 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
     expect(res.status).toBe(404)
   })
 
-  // Retirer un flux de sa liste ne fait QUE désabonner : jamais de suppression
-  // de la source `repository` ni de son contenu `connector_*` (régression :
-  // purger sur "dernier abonné parti" effaçait des données du collecteur).
+  // Removing a flux from your list ONLY unsubscribes: never deletes the
+  // `repository` source or its `connector_*` content (regression: purging on
+  // "last subscriber gone" erased collector data).
   it('a regular user leaving an auto provider only unsubscribes', async () => {
     const sql = mockSql([
       [{ repository_id: 5, type: 'rss' }], // findSubscription
@@ -779,7 +779,7 @@ describe('DELETE /ui/users/:userId/repositories/:linkId', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(200)
-    // findSubscription + DELETE user_repository, rien d'autre : ni readRegistry,
+    // findSubscription + DELETE user_repository, nothing else: no readRegistry,
     // ni countSubscribers, ni DELETE connector_*, ni DELETE repository.
     expect(sql).toHaveBeenCalledTimes(2)
     expect(sql.unsafe).not.toHaveBeenCalled()

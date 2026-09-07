@@ -8,14 +8,14 @@ import { type Bindings, registrationMode } from '../types.js'
 
 export const authRoute = new Hono<{ Bindings: Bindings }>()
 
-// GET /auth/config — ce qu'un client doit savoir avant de montrer l'écran de
-// connexion : mode d'inscription, et quelles méthodes de login cette instance
-// propose. Public, non authentifié — un client s'en sert justement pour choisir
-// à quelle API se connecter.
+// GET /auth/config — what a client needs to know before showing the login
+// screen: registration mode, and which login methods this instance offers.
+// Public, unauthenticated — a client uses it precisely to choose which API to
+// connect to.
 authRoute.get('/config', (c) => {
   return c.json({
-    // Libellé lisible de l'instance (INSTANCE_NAME). `null` si non défini : les
-    // apps retombent alors sur l'hôte de l'URL.
+    // Human-readable instance label (INSTANCE_NAME). `null` if unset: apps then
+    // fall back to the URL's host.
     name: c.env.INSTANCE_NAME || null,
     registrationMode: registrationMode(c.env),
     emailPassword: true,
@@ -44,8 +44,8 @@ authRoute.post('/login', async (c) => {
     password: string
   }>()
 
-  // Connexion admin : `username` porte l'e-mail du compte admin (table `admin`),
-  // vérifié contre son hash. Plus de mot de passe en dur dans l'environnement.
+  // Admin login: `username` carries the admin account's e-mail (table `admin`),
+  // checked against its hash. No more hardcoded password in the environment.
   if (body.username) {
     const store = await getStore(c.env.DATABASE_URL)
     const admin = await store.findAdminByEmail(normalizeEmail(body.username))
@@ -78,10 +78,10 @@ authRoute.post('/login', async (c) => {
   const account = await store.findCredentialByEmail(normalizeEmail(body.email))
 
   if (!account) {
-    // Compte créé en mode `approval` mais pas encore validé : il n'est pas dans
-    // `user`, donc `findCredentialByEmail` ne le voit pas. On le dit clairement
-    // plutôt que « identifiants invalides », qui enverrait l'utilisateur
-    // ressaisir un mot de passe correct en boucle.
+    // Account created in `approval` mode but not yet approved: it is not in
+    // `user`, so `findCredentialByEmail` does not see it. We say so clearly
+    // rather than "invalid credentials", which would send the user re-typing a
+    // correct password over and over.
     const pending = await store.findPendingUserByEmail(
       normalizeEmail(body.email),
     )
@@ -98,8 +98,9 @@ authRoute.post('/login', async (c) => {
     return c.json({ error: 'Invalid credentials' }, 401)
   }
 
-  // Le token porte l'e-mail stocké, pas celui saisi : sinon sa casse varie d'une
-  // connexion à l'autre et les clients affichent deux identités pour un seul compte.
+  // The token carries the stored e-mail, not the typed one: otherwise its case
+  // varies from one login to the next and clients show two identities for a
+  // single account.
   const token = await sign(
     userTokenPayload(userId, name, email),
     c.env.JWT_SECRET,
@@ -109,10 +110,10 @@ authRoute.post('/login', async (c) => {
   return c.json({ token })
 })
 
-// GET /auth/me — renvoie l'identité portée par le token, après vérification de sa
-// signature et de son expiration. Les clients qui ne connaissent pas JWT_SECRET
-// (stayup-ui) s'en servent pour valider une session au lieu de faire confiance au
-// payload non signé qu'ils savent seulement décoder.
+// GET /auth/me — returns the identity carried by the token, after verifying its
+// signature and expiration. Clients that do not know JWT_SECRET (stayup-ui) use
+// it to validate a session instead of trusting the unsigned payload they can
+// only decode.
 authRoute.get('/me', authMiddleware, async (c) => {
   const payload = c.get('jwtPayload') as {
     sub?: string
@@ -146,8 +147,8 @@ authRoute.post('/register', async (c) => {
   const email = normalizeEmail(body.email)
   const passwordHash = await hash(body.password, 10)
 
-  // Mode `approval` : le compte n'est pas créé, il est mis en attente. Pas de
-  // token — l'utilisateur ne peut pas se connecter avant qu'un admin valide.
+  // `approval` mode: the account is not created, it is put on hold. No token —
+  // the user cannot log in before an admin approves it.
   if (registrationMode(c.env) === 'approval') {
     if (await store.findUserByEmail(email)) {
       return c.json({ error: 'Email already in use' }, 409)

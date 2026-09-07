@@ -3,11 +3,11 @@ main = "src/app.ts"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Secrets (à définir via `wrangler secret put`) :
-#   DATABASE_URL  — ex: postgres://user:pass@host/dbname
-#   JWT_SECRET    — clé de signature JWT
-# Les administrateurs sont en base : amorcer le premier super admin avec
-# `npm run create-admin <email> <nom> <mot-de-passe>`.
+# Secrets (set via `wrangler secret put`):
+#   DATABASE_URL  — e.g. postgres://user:pass@host/dbname
+#   JWT_SECRET    — JWT signing key
+# Administrators live in the database: bootstrap the first super admin with
+# `npm run create-admin <email> <name> <password>`.
 
 [observability]
 enabled = true

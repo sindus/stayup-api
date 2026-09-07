@@ -5,27 +5,27 @@ import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
 /**
- * Gestion des bases de données secondaires (admin). Une base secondaire est en
- * lecture seule : l'API n'en agrège que le contenu `connector_*` dans les feeds.
- * Sa chaîne de connexion est chiffrée au repos (voir db/secretbox.ts) et n'est
- * jamais renvoyée — seul l'hôte l'est.
+ * Management of secondary databases (admin). A secondary database is read-only:
+ * the API only aggregates its `connector_*` content into feeds. Its connection
+ * string is encrypted at rest (see db/secretbox.ts) and is never returned — only
+ * the host is.
  */
 export const dataSourcesRoute = new Hono<{ Bindings: Bindings }>()
 
 dataSourcesRoute.use('*', authMiddleware, requireAdmin)
 
-/** Hôte lisible d'une URL de connexion, sans identifiants. */
+/** Readable host of a connection URL, without credentials. */
 function dbHost(url: string): string {
   try {
     const u = new URL(url)
-    // `URL.host` = hostname:port, jamais les identifiants.
+    // `URL.host` = hostname:port, never the credentials.
     return u.host || u.pathname.replace(/^\/+/, '') || url
   } catch {
     return url.replace(/^[a-z0-9+]+:(\/\/)?/i, '').split(/[?#]/)[0]
   }
 }
 
-/** Ouvre l'URL et renvoie les connecteurs qu'elle expose, sans rien enregistrer. */
+/** Opens the URL and returns the connectors it exposes, without saving anything. */
 async function probe(
   url: string,
 ): Promise<
@@ -43,7 +43,7 @@ async function probe(
   }
 }
 
-// GET /ui/data-sources — la base principale (info) + les bases secondaires.
+// GET /ui/data-sources — the primary database (info) + the secondary databases.
 dataSourcesRoute.get('/', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const rows = await store.listDataSources()
@@ -55,7 +55,7 @@ dataSourcesRoute.get('/', async (c) => {
       try {
         host = dbHost(await decryptSecret(r.url_enc, c.env.JWT_SECRET))
       } catch {
-        // clé de chiffrement changée, ou blob corrompu — on l'expose quand même.
+        // encryption key changed, or corrupted blob — we expose it anyway.
       }
       return {
         id: r.id,
@@ -76,14 +76,14 @@ dataSourcesRoute.get('/', async (c) => {
   })
 })
 
-// POST /ui/data-sources/test — teste une URL sans l'enregistrer.
+// POST /ui/data-sources/test — tests a URL without saving it.
 dataSourcesRoute.post('/test', async (c) => {
   const body = await c.req.json<{ url?: string }>()
   if (!body.url) return c.json({ error: 'url is required' }, 400)
   return c.json(await probe(body.url.trim()))
 })
 
-// POST /ui/data-sources — teste puis enregistre (chiffré).
+// POST /ui/data-sources — tests then saves (encrypted).
 dataSourcesRoute.post('/', async (c) => {
   const body = await c.req.json<{ name?: string; url?: string }>()
   if (!body.name || !body.url) {
@@ -118,7 +118,7 @@ dataSourcesRoute.post('/', async (c) => {
   )
 })
 
-// DELETE /ui/data-sources/:id — retire la base (et ses abonnements externes).
+// DELETE /ui/data-sources/:id — removes the database (and its external subscriptions).
 dataSourcesRoute.delete('/:id', async (c) => {
   const id = Number.parseInt(c.req.param('id'), 10)
   if (Number.isNaN(id)) return c.json({ error: 'Data source not found' }, 404)

@@ -29,9 +29,9 @@ describe('normalizeConfigObject', () => {
   })
 
   it('reconstructs an object from the observed production corruption', () => {
-    // config || jsonb_build_object(...) sur un config déjà double-sérialisé
-    // (chaîne) produit un tableau [ancienneChaîne, nouvelObjet] — voir
-    // db/configShape.ts. On doit retrouver les deux jeux de clés.
+    // config || jsonb_build_object(...) on an already doubly-serialized config
+    // (string) produces an array [oldString, newObject] — see db/configShape.ts.
+    // We must get both sets of keys back.
     const corrupted = ['{"max_scraps":5,"retention_days":15}', { title: 'X' }]
     expect(normalizeConfigObject(corrupted)).toEqual({
       max_scraps: 5,

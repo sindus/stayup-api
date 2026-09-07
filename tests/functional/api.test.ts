@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import app from '../../src/app.js'
 import { closeSql, getSql, trackOpenConnections } from '../../src/db/client.js'
 
-// closeSql() ne ferme que les connexions suivies : le suivi est opt-in.
+// closeSql() only closes tracked connections: tracking is opt-in.
 trackOpenConnections(true)
 import type { Bindings } from '../../src/types.js'
 import { authHeaders, json } from '../helpers.js'
@@ -39,9 +39,9 @@ beforeAll(async () => {
   await sql.unsafe(schema)
 
   // connector_changelog / connector_youtube appartiennent normalement aux projets
-  // collecteurs indépendants (stayup-cmd-changelog, stayup-cmd-youtube) — recréées ici
-  // uniquement pour les besoins des tests fonctionnels de stayup-api, en suivant le
-  // même contrat qu'un vrai collecteur (table connector_<name> + ligne provider_registry).
+  // independent collectors (stayup-cmd-changelog, stayup-cmd-youtube) — recreated here
+  // only for stayup-api's functional tests, following the
+  // same contract as a real collector (connector_<name> table + provider_registry row).
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS connector_changelog (
       id            SERIAL PRIMARY KEY,
@@ -82,7 +82,7 @@ beforeAll(async () => {
   )) as { id: number }[]
   repoId = repo.id
 
-  // L'auth admin passe désormais par la table `admin` : on sème un super admin.
+  // Admin auth now goes through the `admin` table: we seed a super admin.
   const { hash } = await import('bcryptjs')
   await sql.unsafe(
     `INSERT INTO admin (id, email, name, password_hash, is_super)

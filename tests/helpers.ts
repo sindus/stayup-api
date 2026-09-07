@@ -44,31 +44,31 @@ export async function authHeaders(
   }
 }
 
-// Corps de réponse de test : la forme varie d'un endpoint à l'autre.
-// biome-ignore lint/suspicious/noExplicitAny: assertions de test sur du JSON dynamique
+// Test response body: the shape varies from one endpoint to the next.
+// biome-ignore lint/suspicious/noExplicitAny: test assertions on dynamic JSON
 export async function json<T = any>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
-// Tag SQL factice : appelable comme template littéral, plus .unsafe(), .begin()
-// et .json() — l'adaptateur passe les configs par ce dernier.
+// Fake SQL tag: callable as a template literal, plus .unsafe(), .begin()
+// and .json() — the adapter passes configs through the latter.
 export type SqlMock = Mock & { unsafe: Mock; begin: Mock; json: Mock }
 
 export function createSqlMock(): SqlMock {
   const sql = Object.assign(vi.fn(), {
     unsafe: vi.fn(),
-    // `sql.begin(fn)` exécute fn avec le même tag factice : les requêtes de la
-    // transaction sont donc comptées comme les autres dans l'ordre des appels.
+    // `sql.begin(fn)` runs fn with the same fake tag: the transaction's queries
+    // are therefore counted like the others in call order.
     begin: vi.fn(),
-    // postgres.js emballe la valeur pour la typer en jsonb ; ici, elle passe telle quelle.
+    // postgres.js wraps the value to type it as jsonb; here it passes through as-is.
     json: vi.fn((value: unknown) => value),
   }) as SqlMock
   sql.begin.mockImplementation((fn: (tx: SqlMock) => unknown) => fn(sql))
   return sql
 }
 
-// Remplace getSql par un tag SQL factice qui répond dans l'ordre des appels.
-// Nécessite vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() })) dans le test.
+// Replaces getSql with a fake SQL tag that answers in call order.
+// Requires vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() })) in the test.
 export function mockSql(responses: unknown[]): SqlMock {
   let call = 0
   const next = () => Promise.resolve(responses[call++] ?? [])

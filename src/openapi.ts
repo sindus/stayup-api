@@ -4,7 +4,7 @@ export const openApiSpec = {
     title: 'StayUp API',
     version: '2.1.0',
     description:
-      'API HTTP exposant les données StayUp — connecteurs, utilisateurs et fils de contenu.',
+      'HTTP API exposing StayUp data — connectors, users and content feeds.',
   },
   servers: [
     {
@@ -22,7 +22,7 @@ export const openApiSpec = {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        description: 'Token JWT obtenu via POST /auth/login',
+        description: 'JWT token obtained via POST /auth/login',
       },
     },
     schemas: {
@@ -36,7 +36,7 @@ export const openApiSpec = {
           provider: {
             type: 'string',
             description:
-              'Nom du provider (dynamique — voir GET /connectors/providers)',
+              'Provider name (dynamic — see GET /connectors/providers)',
           },
           config: { type: 'object' },
         },
@@ -58,7 +58,7 @@ export const openApiSpec = {
           name: { type: 'string' },
           is_super: {
             type: 'boolean',
-            description: 'Peut gérer les autres administrateurs.',
+            description: 'Can manage the other administrators.',
           },
           created_at: { type: 'string', format: 'date-time' },
         },
@@ -72,7 +72,7 @@ export const openApiSpec = {
           created_at: { type: 'string', format: 'date-time' },
           is_subscribed: {
             type: 'boolean',
-            description: "Abonnement de l'utilisateur courant à ce flux",
+            description: "The current user's subscription to this flux",
           },
         },
       },
@@ -103,10 +103,10 @@ export const openApiSpec = {
     '/': {
       get: {
         summary: 'Health check',
-        tags: ['Général'],
+        tags: ['General'],
         responses: {
           200: {
-            description: 'API opérationnelle',
+            description: 'API is up',
             content: {
               'application/json': {
                 schema: {
@@ -121,12 +121,12 @@ export const openApiSpec = {
     },
     '/auth/config': {
       get: {
-        summary: 'Configuration publique de l’authentification',
+        summary: 'Public authentication configuration',
         description:
-          'Ce qu’un client doit savoir avant d’afficher l’écran de connexion : ' +
-          'nom lisible de l’instance (`INSTANCE_NAME`, `null` si non défini), ' +
-          'mode d’inscription (`open` | `approval`) et méthodes de login disponibles.',
-        tags: ['Authentification'],
+          'What a client needs to know before showing the login screen: ' +
+          'the instance’s readable name (`INSTANCE_NAME`, `null` if unset), ' +
+          'registration mode (`open` | `approval`) and available login methods.',
+        tags: ['Authentication'],
         responses: {
           200: {
             description: 'Configuration',
@@ -158,12 +158,12 @@ export const openApiSpec = {
     },
     '/auth/register': {
       post: {
-        summary: 'Créer un compte utilisateur',
+        summary: 'Create a user account',
         description:
-          'Inscription publique. En mode `open`, crée l’utilisateur et retourne ' +
-          'un JWT (201). En mode `approval`, met la demande en attente (202, sans ' +
-          'token) jusqu’à validation d’un admin.',
-        tags: ['Authentification'],
+          'Public sign-up. In `open` mode, creates the user and returns ' +
+          'a JWT (201). In `approval` mode, puts the request on hold (202, no ' +
+          'token) until an admin approves it.',
+        tags: ['Authentication'],
         requestBody: {
           required: true,
           content: {
@@ -178,7 +178,7 @@ export const openApiSpec = {
                     format: 'email',
                     example: 'alice@example.com',
                   },
-                  password: { type: 'string', example: 'monmotdepasse' },
+                  password: { type: 'string', example: 'mypassword' },
                 },
               },
             },
@@ -186,7 +186,7 @@ export const openApiSpec = {
         },
         responses: {
           201: {
-            description: 'Compte créé, token JWT retourné',
+            description: 'Account created, JWT token returned',
             content: {
               'application/json': {
                 schema: {
@@ -197,36 +197,36 @@ export const openApiSpec = {
             },
           },
           202: {
-            description: 'Mode approval : demande en attente de validation',
+            description: 'approval mode: request awaiting approval',
           },
-          400: { description: 'Champs requis manquants' },
-          409: { description: 'Email déjà utilisé' },
+          400: { description: 'Missing required fields' },
+          409: { description: 'Email already in use' },
         },
       },
     },
     '/auth/oauth/google': {
       get: {
-        summary: 'Initier le flux OAuth Google',
+        summary: 'Start the Google OAuth flow',
         description:
-          'Génère un state JWT et redirige vers Google OAuth. `redirect_uri` ' +
-          '(deep link mobile) et `client_state` (valeur opaque renvoyée telle ' +
-          'quelle en `&state=` sur le callback) sont optionnels.',
-        tags: ['Authentification'],
+          'Generates a JWT state and redirects to Google OAuth. `redirect_uri` ' +
+          '(mobile deep link) and `client_state` (opaque value returned as-is ' +
+          'in `&state=` on the callback) are optional.',
+        tags: ['Authentication'],
         parameters: [
           { name: 'redirect_uri', in: 'query', schema: { type: 'string' } },
           { name: 'client_state', in: 'query', schema: { type: 'string' } },
         ],
         responses: {
-          302: { description: 'Redirection vers Google' },
+          302: { description: 'Redirect to Google' },
         },
       },
     },
     '/auth/oauth/google/callback': {
       get: {
-        summary: 'Callback OAuth Google',
+        summary: 'Google OAuth callback',
         description:
-          "Échange le code, crée/trouve l'utilisateur, redirige vers l'UI avec un JWT.",
-        tags: ['Authentification'],
+          'Exchanges the code, creates/finds the user, redirects to the UI with a JWT.',
+        tags: ['Authentication'],
         parameters: [
           {
             name: 'code',
@@ -243,34 +243,34 @@ export const openApiSpec = {
         ],
         responses: {
           302: {
-            description: "Redirection vers l'UI (/api/auth/callback?token=JWT)",
+            description: 'Redirect to the UI (/api/auth/callback?token=JWT)',
           },
-          400: { description: 'State invalide ou code manquant' },
+          400: { description: 'Invalid state or missing code' },
         },
       },
     },
     '/auth/oauth/github': {
       get: {
-        summary: 'Initier le flux OAuth GitHub',
+        summary: 'Start the GitHub OAuth flow',
         description:
-          'Génère un state JWT et redirige vers GitHub OAuth. `redirect_uri` ' +
-          'et `client_state` (renvoyé en `&state=` sur le callback) sont optionnels.',
-        tags: ['Authentification'],
+          'Generates a JWT state and redirects to GitHub OAuth. `redirect_uri` ' +
+          'and `client_state` (returned as `&state=` on the callback) are optional.',
+        tags: ['Authentication'],
         parameters: [
           { name: 'redirect_uri', in: 'query', schema: { type: 'string' } },
           { name: 'client_state', in: 'query', schema: { type: 'string' } },
         ],
         responses: {
-          302: { description: 'Redirection vers GitHub' },
+          302: { description: 'Redirect to GitHub' },
         },
       },
     },
     '/auth/oauth/github/callback': {
       get: {
-        summary: 'Callback OAuth GitHub',
+        summary: 'GitHub OAuth callback',
         description:
-          "Échange le code, crée/trouve l'utilisateur, redirige vers l'UI avec un JWT.",
-        tags: ['Authentification'],
+          'Exchanges the code, creates/finds the user, redirects to the UI with a JWT.',
+        tags: ['Authentication'],
         parameters: [
           {
             name: 'code',
@@ -287,20 +287,20 @@ export const openApiSpec = {
         ],
         responses: {
           302: {
-            description: "Redirection vers l'UI (/api/auth/callback?token=JWT)",
+            description: 'Redirect to the UI (/api/auth/callback?token=JWT)',
           },
-          400: { description: 'State invalide ou code manquant' },
+          400: { description: 'Invalid state or missing code' },
         },
       },
     },
     '/auth/login': {
       post: {
-        summary: 'Connexion — obtenir un token JWT',
+        summary: 'Log in — obtain a JWT token',
         description:
-          'Authentification admin (username = e-mail du compte admin + password) ' +
-          'ou utilisateur (email + password). Les admins sont stockés en base ' +
-          '(table `admin`) ; le premier est créé via `npm run create-admin`.',
-        tags: ['Authentification'],
+          'Admin authentication (username = admin account e-mail + password) ' +
+          'or user (email + password). Admins are stored in the database ' +
+          '(table `admin`); the first one is created via `npm run create-admin`.',
+        tags: ['Authentication'],
         requestBody: {
           required: true,
           content: {
@@ -321,7 +321,7 @@ export const openApiSpec = {
                     },
                   },
                   {
-                    title: 'Utilisateur',
+                    title: 'User',
                     type: 'object',
                     required: ['email', 'password'],
                     properties: {
@@ -330,7 +330,7 @@ export const openApiSpec = {
                         format: 'email',
                         example: 'user@example.com',
                       },
-                      password: { type: 'string', example: 'monmotdepasse' },
+                      password: { type: 'string', example: 'mypassword' },
                     },
                   },
                 ],
@@ -340,7 +340,7 @@ export const openApiSpec = {
         },
         responses: {
           200: {
-            description: 'Token JWT',
+            description: 'JWT token',
             content: {
               'application/json': {
                 schema: {
@@ -350,23 +350,23 @@ export const openApiSpec = {
               },
             },
           },
-          400: { description: 'Champs requis manquants' },
-          401: { description: 'Identifiants invalides' },
+          400: { description: 'Missing required fields' },
+          401: { description: 'Invalid credentials' },
         },
       },
     },
     '/auth/me': {
       get: {
-        summary: 'Identité portée par le token',
+        summary: 'Identity carried by the token',
         description:
-          "Valide la signature et l'expiration du token, puis renvoie son identité. " +
-          'Destiné aux clients qui ne connaissent pas JWT_SECRET et ne peuvent donc ' +
-          'que décoder le payload sans le vérifier.',
-        tags: ['Authentification'],
+          "Validates the token's signature and expiration, then returns its identity. " +
+          'Intended for clients that do not know JWT_SECRET and can therefore ' +
+          'only decode the payload without verifying it.',
+        tags: ['Authentication'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Identité du porteur du token',
+            description: "The token bearer's identity",
             content: {
               'application/json': {
                 schema: {
@@ -377,7 +377,7 @@ export const openApiSpec = {
                     isSuper: {
                       type: 'boolean',
                       description:
-                        'Vrai pour un super admin (gère les autres admins).',
+                        'True for a super admin (manages the other admins).',
                     },
                     name: { type: 'string' },
                     email: { type: 'string', format: 'email' },
@@ -386,18 +386,18 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Token absent, invalide ou expiré' },
+          401: { description: 'Token missing, invalid or expired' },
         },
       },
     },
     '/connectors': {
       get: {
-        summary: 'Toutes les données de tous les connecteurs',
-        tags: ['Connecteurs'],
+        summary: 'All data from all connectors',
+        tags: ['Connectors'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Données de chaque table connector_*',
+            description: 'Data from every connector_* table',
             content: {
               'application/json': {
                 schema: {
@@ -406,7 +406,7 @@ export const openApiSpec = {
                     connectors: {
                       type: 'object',
                       description:
-                        'Une clé par provider découvert (voir GET /connectors/providers)',
+                        'One key per discovered provider (see GET /connectors/providers)',
                       additionalProperties: { type: 'array', items: {} },
                     },
                   },
@@ -414,20 +414,20 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
+          401: { description: 'Unauthenticated' },
         },
       },
     },
     '/connectors/providers': {
       get: {
-        summary: 'Liste des providers découverts',
+        summary: 'List of discovered providers',
         description:
-          "Providers disponibles (table connector_<name> présente en base), avec leur nom affiché depuis provider_registry. Sert à construire une UI dynamique (onglets, sélecteur d'ajout de flux) sans tirer toutes les données.",
-        tags: ['Connecteurs'],
+          'Available providers (connector_<name> table present in the database), with their display name from provider_registry. Used to build a dynamic UI (tabs, flux-adding selector) without pulling all the data.',
+        tags: ['Connectors'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Liste des providers',
+            description: 'List of providers',
             content: {
               'application/json': {
                 schema: {
@@ -444,13 +444,13 @@ export const openApiSpec = {
                             type: 'string',
                             enum: ['auto', 'manual'],
                             description:
-                              "Mode d'ajout d'un flux par un utilisateur : `auto` (créé tout de suite) ou `manual` (demande à valider par un admin).",
+                              'Mode for a user adding a flux: `auto` (created right away) or `manual` (a request an admin must approve).',
                           },
                           template: {
                             type: 'object',
                             nullable: true,
                             description:
-                              "Manifeste d'affichage que le provider déclare pour les apps (provider_registry.template). Relayé tel quel, non interprété par l'API ; absent si le provider n'en publie pas — les apps rendent alors en générique.",
+                              'Display manifest the provider declares for the apps (provider_registry.template). Relayed as-is, not interpreted by the API; absent if the provider does not publish one — apps then render generically.',
                             additionalProperties: true,
                           },
                         },
@@ -461,18 +461,18 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
+          401: { description: 'Unauthenticated' },
         },
       },
     },
     '/connectors/latest': {
       get: {
-        summary: 'Dernière entrée par source pour chaque connecteur',
-        tags: ['Connecteurs'],
+        summary: 'Latest entry per source for each connector',
+        tags: ['Connectors'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Dernier contenu par repository_id',
+            description: 'Latest content per repository_id',
             content: {
               'application/json': {
                 schema: {
@@ -487,15 +487,15 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
         },
       },
     },
     '/connectors/{name}': {
       get: {
-        summary: 'Dernière entrée par source pour un connecteur spécifique',
-        tags: ['Connecteurs'],
+        summary: 'Latest entry per source for a specific connector',
+        tags: ['Connectors'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -504,12 +504,12 @@ export const openApiSpec = {
             required: true,
             schema: { type: 'string' },
             description:
-              'Nom du connecteur (sans le préfixe connector_) — voir GET /connectors/providers pour la liste disponible',
+              'Connector name (without the connector_ prefix) — see GET /connectors/providers for the available list',
           },
         ],
         responses: {
           200: {
-            description: 'Données du connecteur',
+            description: 'Connector data',
             content: {
               'application/json': {
                 schema: {
@@ -522,19 +522,19 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          404: { description: 'Connecteur introuvable' },
+          401: { description: 'Unauthenticated' },
+          404: { description: 'Connector not found' },
         },
       },
     },
     '/ui/users': {
       get: {
-        summary: 'Lister tous les utilisateurs',
-        tags: ['Admin — Utilisateurs'],
+        summary: 'List all users',
+        tags: ['Admin — Users'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Liste des utilisateurs',
+            description: 'List of users',
             content: {
               'application/json': {
                 schema: {
@@ -549,13 +549,13 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
         },
       },
       post: {
-        summary: 'Créer un utilisateur',
-        tags: ['Admin — Utilisateurs'],
+        summary: 'Create a user',
+        tags: ['Admin — Users'],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -571,7 +571,7 @@ export const openApiSpec = {
                     format: 'email',
                     example: 'alice@example.com',
                   },
-                  password: { type: 'string', example: 'monmotdepasse' },
+                  password: { type: 'string', example: 'mypassword' },
                 },
               },
             },
@@ -579,7 +579,7 @@ export const openApiSpec = {
         },
         responses: {
           201: {
-            description: 'Utilisateur créé',
+            description: 'User created',
             content: {
               'application/json': {
                 schema: {
@@ -591,21 +591,21 @@ export const openApiSpec = {
               },
             },
           },
-          400: { description: 'Champs requis manquants' },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
-          409: { description: 'Email déjà utilisé' },
+          400: { description: 'Missing required fields' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
+          409: { description: 'Email already in use' },
         },
       },
     },
     '/ui/admins': {
       get: {
-        summary: 'Lister les administrateurs (super admin)',
-        tags: ['Admin — Administrateurs'],
+        summary: 'List administrators (super admin)',
+        tags: ['Admin — Admins'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Liste des admins',
+            description: 'List of admins',
             content: {
               'application/json': {
                 schema: {
@@ -620,14 +620,14 @@ export const openApiSpec = {
               },
             },
           },
-          403: { description: 'Super admin requis' },
+          403: { description: 'Super admin required' },
         },
       },
       post: {
-        summary: 'Créer un administrateur normal (super admin)',
+        summary: 'Create a normal administrator (super admin)',
         description:
-          'Crée un admin non-super. Les super admins ne se créent qu’en ligne de commande.',
-        tags: ['Admin — Administrateurs'],
+          'Creates a non-super admin. Super admins can only be created from the command line.',
+        tags: ['Admin — Admins'],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -646,17 +646,17 @@ export const openApiSpec = {
           },
         },
         responses: {
-          201: { description: 'Admin créé' },
-          400: { description: 'Champs requis manquants' },
-          403: { description: 'Super admin requis' },
-          409: { description: 'Email déjà utilisé' },
+          201: { description: 'Admin created' },
+          400: { description: 'Missing required fields' },
+          403: { description: 'Super admin required' },
+          409: { description: 'Email already in use' },
         },
       },
     },
     '/ui/admins/me': {
       patch: {
-        summary: 'Changer son propre mot de passe (admin)',
-        tags: ['Admin — Administrateurs'],
+        summary: 'Change your own password (admin)',
+        tags: ['Admin — Admins'],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -674,16 +674,16 @@ export const openApiSpec = {
           },
         },
         responses: {
-          200: { description: 'Mot de passe changé' },
-          400: { description: 'Champs requis manquants' },
-          401: { description: 'Mot de passe actuel incorrect' },
+          200: { description: 'Password changed' },
+          400: { description: 'Missing required fields' },
+          401: { description: 'Current password incorrect' },
         },
       },
     },
     '/ui/admins/{id}': {
       patch: {
-        summary: 'Modifier un administrateur (super admin)',
-        tags: ['Admin — Administrateurs'],
+        summary: 'Edit an administrator (super admin)',
+        tags: ['Admin — Admins'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -709,17 +709,17 @@ export const openApiSpec = {
           },
         },
         responses: {
-          200: { description: 'Admin modifié' },
-          403: { description: 'Super admin requis' },
-          404: { description: 'Admin introuvable' },
-          409: { description: 'Email déjà utilisé' },
+          200: { description: 'Admin edited' },
+          403: { description: 'Super admin required' },
+          404: { description: 'Admin not found' },
+          409: { description: 'Email already in use' },
         },
       },
       delete: {
-        summary: 'Supprimer un administrateur (super admin)',
+        summary: 'Delete an administrator (super admin)',
         description:
-          'Un super admin ne se supprime pas depuis l’interface, ni soi-même.',
-        tags: ['Admin — Administrateurs'],
+          'A super admin cannot be deleted from the UI, nor can you delete yourself.',
+        tags: ['Admin — Admins'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -730,31 +730,33 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: { description: 'Admin supprimé' },
-          403: { description: 'Super admin requis, ou cible super admin' },
-          404: { description: 'Admin introuvable' },
-          409: { description: 'On ne peut pas se supprimer soi-même' },
+          200: { description: 'Admin deleted' },
+          403: {
+            description: 'Super admin required, or target is a super admin',
+          },
+          404: { description: 'Admin not found' },
+          409: { description: 'You cannot delete yourself' },
         },
       },
     },
     '/ui/data-sources': {
       get: {
-        summary: 'Bases de données secondaires',
+        summary: 'Secondary databases',
         description:
-          'La base principale (info) + les bases secondaires déclarées. La chaîne ' +
-          'de connexion n’est jamais renvoyée — seul l’hôte. Admin requis.',
+          'The primary database (info) + the declared secondary databases. The ' +
+          'connection string is never returned — only the host. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         responses: {
-          200: { description: 'Base principale + bases secondaires' },
-          403: { description: 'Admin requis' },
+          200: { description: 'Primary database + secondary databases' },
+          403: { description: 'Admin required' },
         },
       },
       post: {
-        summary: 'Ajouter une base secondaire',
+        summary: 'Add a secondary database',
         description:
-          'Teste l’URL, refuse si aucune table connector_* n’y existe, puis ' +
-          'l’enregistre chiffrée. Admin requis.',
+          'Tests the URL, refuses if no connector_* table exists there, then ' +
+          'saves it encrypted. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         requestBody: {
@@ -776,17 +778,17 @@ export const openApiSpec = {
           },
         },
         responses: {
-          201: { description: 'Base ajoutée' },
-          400: { description: 'URL invalide, injoignable, ou sans connecteur' },
-          403: { description: 'Admin requis' },
+          201: { description: 'Database added' },
+          400: { description: 'Invalid URL, unreachable, or no connector' },
+          403: { description: 'Admin required' },
         },
       },
     },
     '/ui/data-sources/test': {
       post: {
-        summary: 'Tester une URL de base sans l’enregistrer',
+        summary: 'Test a database URL without saving it',
         description:
-          'Renvoie `{ ok, engine, connectors }` ou `{ ok: false, error }`. Admin requis.',
+          'Returns `{ ok, engine, connectors }` or `{ ok: false, error }`. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         requestBody: {
@@ -802,17 +804,17 @@ export const openApiSpec = {
           },
         },
         responses: {
-          200: { description: 'Résultat du test' },
-          403: { description: 'Admin requis' },
+          200: { description: 'Test result' },
+          403: { description: 'Admin required' },
         },
       },
     },
     '/ui/data-sources/{id}': {
       delete: {
-        summary: 'Retirer une base secondaire',
+        summary: 'Remove a secondary database',
         description:
-          'Supprime la base et, en cascade, les abonnements externes qui la ' +
-          'visaient. Admin requis.',
+          'Deletes the database and, cascading, the external subscriptions that ' +
+          'targeted it. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -824,30 +826,30 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: { description: 'Base retirée' },
-          404: { description: 'Base introuvable' },
+          200: { description: 'Database removed' },
+          404: { description: 'Database not found' },
         },
       },
     },
     '/ui/users/pending': {
       get: {
-        summary: 'Inscriptions en attente de validation',
+        summary: 'Sign-ups awaiting approval',
         description:
-          'Comptes créés en mode `approval` et pas encore activés. Admin requis.',
+          'Accounts created in `approval` mode and not yet activated. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         responses: {
-          200: { description: 'Liste des inscriptions en attente' },
-          403: { description: 'Admin requis' },
+          200: { description: 'List of pending sign-ups' },
+          403: { description: 'Admin required' },
         },
       },
     },
     '/ui/users/pending/{id}/approve': {
       post: {
-        summary: 'Valider une inscription en attente',
+        summary: 'Approve a pending sign-up',
         description:
-          'Crée le compte à partir de la demande (e-mail ou OAuth) et retire la ' +
-          'ligne en attente. Admin requis.',
+          'Creates the account from the request (e-mail or OAuth) and removes ' +
+          'the pending row. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -859,16 +861,16 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          201: { description: 'Compte créé' },
-          404: { description: 'Demande introuvable' },
-          409: { description: 'Email déjà utilisé entre-temps' },
+          201: { description: 'Account created' },
+          404: { description: 'Request not found' },
+          409: { description: 'Email taken in the meantime' },
         },
       },
     },
     '/ui/users/pending/{id}/reject': {
       post: {
-        summary: 'Rejeter une inscription en attente',
-        description: 'Supprime la demande. Admin requis.',
+        summary: 'Reject a pending sign-up',
+        description: 'Deletes the request. Admin required.',
         tags: ['Administration'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -880,16 +882,16 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: { description: 'Demande rejetée' },
-          404: { description: 'Demande introuvable' },
+          200: { description: 'Request rejected' },
+          404: { description: 'Request not found' },
         },
       },
     },
     '/ui/users/{userId}': {
       get: {
-        summary: "Profil d'un utilisateur",
-        description: "Accessible par l'utilisateur lui-même ou un admin.",
-        tags: ['UI — Utilisateurs'],
+        summary: "A user's profile",
+        description: 'Accessible by the user themselves or an admin.',
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -901,7 +903,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: "Profil de l'utilisateur",
+            description: "The user's profile",
             content: {
               'application/json': {
                 schema: {
@@ -911,15 +913,15 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé' },
-          404: { description: 'Utilisateur introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied' },
+          404: { description: 'User not found' },
         },
       },
       patch: {
-        summary: 'Modifier un utilisateur',
-        description: "Accessible par l'utilisateur lui-même ou un admin.",
-        tags: ['UI — Utilisateurs'],
+        summary: 'Edit a user',
+        description: 'Accessible by the user themselves or an admin.',
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -946,7 +948,7 @@ export const openApiSpec = {
         },
         responses: {
           200: {
-            description: 'Utilisateur modifié',
+            description: 'User edited',
             content: {
               'application/json': {
                 schema: {
@@ -956,14 +958,14 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé (self ou admin requis)' },
-          404: { description: 'Utilisateur introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied (self or admin required)' },
+          404: { description: 'User not found' },
         },
       },
       delete: {
-        summary: 'Supprimer un utilisateur',
-        tags: ['Admin — Utilisateurs'],
+        summary: 'Delete a user',
+        tags: ['Admin — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -975,7 +977,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: 'Utilisateur supprimé',
+            description: 'User deleted',
             content: {
               'application/json': {
                 schema: {
@@ -985,18 +987,18 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Utilisateur introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
+          404: { description: 'User not found' },
         },
       },
     },
     '/ui/users/{userId}/feed': {
       get: {
-        summary: "Fil de contenu complet d'un utilisateur",
+        summary: "A user's full content feed",
         description:
-          "Retourne les flux configurés et le contenu associé (tous connecteurs). Accessible par l'utilisateur lui-même ou un admin.",
-        tags: ['UI — Utilisateurs'],
+          'Returns the configured fluxes and the associated content (all connectors). Accessible by the user themselves or an admin.',
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1004,12 +1006,12 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur",
+            description: "The user's ID",
           },
         ],
         responses: {
           200: {
-            description: "Feed de l'utilisateur",
+            description: "The user's feed",
             content: {
               'application/json': {
                 schema: {
@@ -1022,7 +1024,7 @@ export const openApiSpec = {
                     connectors: {
                       type: 'object',
                       description:
-                        'Une clé par provider découvert (voir GET /connectors/providers)',
+                        'One key per discovered provider (see GET /connectors/providers)',
                       additionalProperties: { type: 'array', items: {} },
                     },
                   },
@@ -1030,17 +1032,17 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied' },
         },
       },
     },
     '/ui/users/{userId}/feed/{connector}': {
       get: {
-        summary: "Fil de contenu d'un utilisateur pour un connecteur",
+        summary: "A user's content feed for one connector",
         description:
-          "Retourne uniquement le contenu du connecteur spécifié pour l'utilisateur. Accessible par l'utilisateur lui-même ou un admin.",
-        tags: ['UI — Utilisateurs'],
+          "Returns only the specified connector's content for the user. Accessible by the user themselves or an admin.",
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1054,13 +1056,12 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description:
-              'Voir GET /connectors/providers pour la liste disponible',
+            description: 'See GET /connectors/providers for the available list',
           },
         ],
         responses: {
           200: {
-            description: 'Contenu du connecteur',
+            description: 'Connector content',
             content: {
               'application/json': {
                 schema: {
@@ -1073,18 +1074,18 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé' },
-          404: { description: 'Connecteur inconnu' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied' },
+          404: { description: 'Unknown connector' },
         },
       },
     },
     '/ui/users/{userId}/repositories': {
       post: {
-        summary: 'Ajouter un flux à un utilisateur',
+        summary: 'Add a flux to a user',
         description:
-          "Si le provider est en mode `manual` et que l'appelant est un utilisateur (pas un admin) et que l'URL n'existe pas encore, renvoie **202** avec `{ status: 'pending', request }` : le flux passe par la file d'approbation admin au lieu d'être créé.",
-        tags: ['UI — Utilisateurs'],
+          "If the provider is in `manual` mode and the caller is a user (not an admin) and the URL does not exist yet, returns **202** with `{ status: 'pending', request }`: the flux goes through the admin approval queue instead of being created.",
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1092,7 +1093,7 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur",
+            description: "The user's ID",
           },
         ],
         requestBody: {
@@ -1106,7 +1107,7 @@ export const openApiSpec = {
                   provider: {
                     type: 'string',
                     description:
-                      'Voir GET /connectors/providers pour la liste disponible',
+                      'See GET /connectors/providers for the available list',
                   },
                   url: {
                     type: 'string',
@@ -1120,7 +1121,7 @@ export const openApiSpec = {
         },
         responses: {
           201: {
-            description: 'Flux ajouté',
+            description: 'Flux added',
             content: {
               'application/json': {
                 schema: {
@@ -1136,7 +1137,7 @@ export const openApiSpec = {
           },
           202: {
             description:
-              'Provider `manual` : demande créée, en attente d’approbation admin',
+              '`manual` provider: request created, awaiting admin approval',
             content: {
               'application/json': {
                 schema: {
@@ -1149,19 +1150,21 @@ export const openApiSpec = {
               },
             },
           },
-          400: { description: 'provider et url requis' },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé' },
-          409: { description: 'Déjà abonné, ou demande déjà en attente' },
+          400: { description: 'provider and url required' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied' },
+          409: {
+            description: 'Already subscribed, or a request is already pending',
+          },
         },
       },
     },
     '/ui/users/{userId}/repositories/{linkId}': {
       delete: {
-        summary: "Supprimer un flux d'un utilisateur",
+        summary: 'Remove a flux from a user',
         description:
-          "**Utilisateur** : supprime le lien. Si ce flux n'est plus abonné par aucun autre utilisateur, supprime aussi le repository et toutes les données connector associées.\n\n**Admin** : supprime toujours le repository et toutes les données connector associées, quel que soit le nombre d'abonnés.",
-        tags: ['UI — Utilisateurs'],
+          '**User**: deletes the link. If this flux is no longer subscribed by any other user, also deletes the repository and all the associated connector data.\n\n**Admin**: always deletes the repository and all the associated connector data, regardless of the subscriber count.',
+        tags: ['UI — Users'],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1169,19 +1172,19 @@ export const openApiSpec = {
             in: 'path',
             required: true,
             schema: { type: 'string' },
-            description: "ID de l'utilisateur",
+            description: "The user's ID",
           },
           {
             name: 'linkId',
             in: 'path',
             required: true,
             schema: { type: 'string', format: 'uuid' },
-            description: 'ID du lien user_repository',
+            description: 'The user_repository link ID',
           },
         ],
         responses: {
           200: {
-            description: 'Flux supprimé',
+            description: 'Flux removed',
             content: {
               'application/json': {
                 schema: {
@@ -1191,17 +1194,17 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Accès refusé' },
-          404: { description: 'Flux introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Access denied' },
+          404: { description: 'Flux not found' },
         },
       },
     },
     '/ui/repositories': {
       post: {
-        summary: 'Créer un repository (admin)',
+        summary: 'Create a repository (admin)',
         description:
-          'Crée le repository, ou met à jour son type et sa config si l’URL existe déjà.',
+          'Creates the repository, or updates its type and config if the URL already exists.',
         tags: ['Admin — Repositories'],
         security: [{ bearerAuth: [] }],
         requestBody: {
@@ -1216,7 +1219,7 @@ export const openApiSpec = {
                   type: {
                     type: 'string',
                     description:
-                      'Voir GET /connectors/providers pour la liste disponible',
+                      'See GET /connectors/providers for the available list',
                   },
                   config: { type: 'object' },
                 },
@@ -1226,7 +1229,7 @@ export const openApiSpec = {
         },
         responses: {
           201: {
-            description: 'Repository créé',
+            description: 'Repository created',
             content: {
               'application/json': {
                 schema: {
@@ -1240,18 +1243,18 @@ export const openApiSpec = {
               },
             },
           },
-          400: { description: 'url ou type manquant' },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          400: { description: 'Missing url or type' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
         },
       },
       get: {
-        summary: 'Lister tous les repositories (admin)',
+        summary: 'List all repositories (admin)',
         tags: ['Admin — Repositories'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: "Liste des repositories avec nombre d'abonnés",
+            description: 'List of repositories with subscriber count',
             content: {
               'application/json': {
                 schema: {
@@ -1275,16 +1278,16 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
         },
       },
     },
     '/ui/repositories/{repoId}': {
       delete: {
-        summary: 'Supprimer un repository complètement (admin)',
+        summary: 'Delete a repository completely (admin)',
         description:
-          'Supprime les données connector, tous les liens user_repository et le repository.',
+          'Deletes the connector data, every user_repository link and the repository.',
         tags: ['Admin — Repositories'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1297,7 +1300,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: 'Repository supprimé',
+            description: 'Repository deleted',
             content: {
               'application/json': {
                 schema: {
@@ -1307,18 +1310,17 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Repository introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
+          404: { description: 'Repository not found' },
         },
       },
     },
     '/ui/repositories/{repoId}/data': {
       delete: {
-        summary:
-          "Supprimer uniquement les données connector d'un repository (admin)",
+        summary: "Delete only a repository's connector data (admin)",
         description:
-          'Vide la table connector_* pour ce repository sans supprimer le repository ni les abonnements.',
+          'Empties the connector_* table for this repository without deleting the repository or the subscriptions.',
         tags: ['Admin — Repositories'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1331,7 +1333,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: 'Données supprimées',
+            description: 'Data deleted',
             content: {
               'application/json': {
                 schema: {
@@ -1341,17 +1343,17 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Repository introuvable' },
+          401: { description: 'Unauthenticated' },
+          403: { description: 'Admin role required' },
+          404: { description: 'Repository not found' },
         },
       },
     },
     '/providers/{provider}/fluxes': {
       get: {
-        summary: 'Lister les flux existants d’un provider',
+        summary: "List a provider's existing fluxes",
         description:
-          "Renvoie toutes les sources de ce provider avec, pour chacune, l'état d'abonnement de l'utilisateur authentifié. Générique : vaut pour n'importe quel provider.",
+          "Returns every source of this provider with, for each, the authenticated user's subscription state. Generic: works for any provider.",
         tags: ['Flux'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1364,7 +1366,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: 'Liste des flux',
+            description: 'List of fluxes',
             content: {
               'application/json': {
                 schema: {
@@ -1379,13 +1381,13 @@ export const openApiSpec = {
               },
             },
           },
-          401: { description: 'Non authentifié' },
+          401: { description: 'Unauthenticated' },
         },
       },
     },
     '/providers/{provider}/fluxes/{id}/subscribe': {
       post: {
-        summary: 'S’abonner à un flux existant',
+        summary: 'Subscribe to an existing flux',
         tags: ['Flux'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1403,16 +1405,16 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          201: { description: 'Abonnement créé' },
-          401: { description: 'Non authentifié' },
-          404: { description: 'Flux introuvable pour ce provider' },
-          409: { description: 'Déjà abonné' },
+          201: { description: 'Subscription created' },
+          401: { description: 'Unauthenticated' },
+          404: { description: 'Flux not found for this provider' },
+          409: { description: 'Already subscribed' },
         },
       },
       delete: {
-        summary: 'Se désabonner d’un flux',
+        summary: 'Unsubscribe from a flux',
         description:
-          'Supprime uniquement l’abonnement — la source peut avoir d’autres abonnés.',
+          'Deletes only the subscription — the source may have other subscribers.',
         tags: ['Flux'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1430,20 +1432,20 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: { description: 'Désabonnement effectué' },
-          401: { description: 'Non authentifié' },
-          404: { description: 'Non abonné à ce flux' },
+          200: { description: 'Unsubscribed' },
+          401: { description: 'Unauthenticated' },
+          404: { description: 'Not subscribed to this flux' },
         },
       },
     },
     '/ui/providers': {
       get: {
-        summary: 'Providers + leur mode d’approbation de flux (admin)',
+        summary: 'Providers + their flux-approval mode (admin)',
         tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Liste des providers',
+            description: 'List of providers',
             content: {
               'application/json': {
                 schema: {
@@ -1468,13 +1470,13 @@ export const openApiSpec = {
               },
             },
           },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Admin role required' },
         },
       },
     },
     '/ui/providers/{name}': {
       patch: {
-        summary: 'Changer le mode d’ajout de flux d’un provider (admin)',
+        summary: "Change a provider's flux-adding mode (admin)",
         tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1500,24 +1502,24 @@ export const openApiSpec = {
           },
         },
         responses: {
-          200: { description: 'Mode mis à jour' },
-          400: { description: "flux_approval doit être 'auto' ou 'manual'" },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Provider introuvable' },
+          200: { description: 'Mode updated' },
+          400: { description: "flux_approval must be 'auto' or 'manual'" },
+          403: { description: 'Admin role required' },
+          404: { description: 'Provider not found' },
         },
       },
     },
     '/ui/flux-requests': {
       get: {
-        summary: 'Lister toutes les demandes de flux (admin)',
+        summary: 'List all flux requests (admin)',
         description:
-          'Demandes en attente d’approbation, tous providers en mode `manual` confondus.',
+          'Requests awaiting approval, across every provider in `manual` mode.',
         tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
             description:
-              'Liste des demandes avec provider et e-mail du demandeur',
+              "List of requests with the provider and requester's e-mail",
             content: {
               'application/json': {
                 schema: {
@@ -1532,15 +1534,15 @@ export const openApiSpec = {
               },
             },
           },
-          403: { description: 'Rôle admin requis' },
+          403: { description: 'Admin role required' },
         },
       },
     },
     '/ui/flux-requests/{id}/approve': {
       post: {
-        summary: 'Approuver une demande de flux (admin)',
+        summary: 'Approve a flux request (admin)',
         description:
-          'Crée (ou réutilise) la source sous le provider de la demande, abonne le demandeur et passe la demande en `approved`. Body optionnel : `{ config }`.',
+          "Creates (or reuses) the source under the request's provider, subscribes the requester and moves the request to `approved`. Optional body: `{ config }`.",
         tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1553,7 +1555,7 @@ export const openApiSpec = {
         ],
         responses: {
           200: {
-            description: 'Demande approuvée',
+            description: 'Request approved',
             content: {
               'application/json': {
                 schema: {
@@ -1566,18 +1568,18 @@ export const openApiSpec = {
               },
             },
           },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Demande introuvable' },
+          403: { description: 'Admin role required' },
+          404: { description: 'Request not found' },
           409: {
             description:
-              'Demande déjà approuvée, ou URL déjà rattachée à un autre provider',
+              'Request already approved, or URL already attached to another provider',
           },
         },
       },
     },
     '/ui/flux-requests/{id}/reject': {
       post: {
-        summary: 'Rejeter une demande de flux (admin)',
+        summary: 'Reject a flux request (admin)',
         tags: ['Admin — Providers'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -1589,10 +1591,10 @@ export const openApiSpec = {
           },
         ],
         responses: {
-          200: { description: 'Demande rejetée' },
-          403: { description: 'Rôle admin requis' },
-          404: { description: 'Demande introuvable' },
-          409: { description: 'Demande non en attente' },
+          200: { description: 'Request rejected' },
+          403: { description: 'Admin role required' },
+          404: { description: 'Request not found' },
+          409: { description: 'Request is not pending' },
         },
       },
     },

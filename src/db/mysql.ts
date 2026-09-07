@@ -1,18 +1,18 @@
 /**
- * Adaptateur MySQL / MariaDB.
+ * MySQL / MariaDB adapter.
  *
- * Le contrat est le même que sous Postgres, à cinq différences près :
+ * The contract is the same as under Postgres, with five differences:
  *
- * - la découverte interroge `information_schema` restreint à `DATABASE()`, la
- *   base courante, là où Postgres parle de schéma ;
- * - pas de `RETURNING` : une insertion se relit, ou se retrouve par `insertId` ;
- * - `ON CONFLICT` s'écrit `ON DUPLICATE KEY UPDATE` ;
- * - pas de type tableau : `= ANY($1)` devient un `IN (…)` construit à la volée ;
- * - MySQL rend un JSON déjà désérialisé, MariaDB une chaîne — l'adaptateur
- *   accepte les deux, comme il accepte le TEXT de SQLite.
+ * - discovery queries `information_schema` restricted to `DATABASE()`, the
+ *   current database, where Postgres talks about a schema;
+ * - no `RETURNING`: an insert is read back, or found again by `insertId`;
+ * - `ON CONFLICT` is written `ON DUPLICATE KEY UPDATE`;
+ * - no array type: `= ANY($1)` becomes an `IN (…)` built on the fly;
+ * - MySQL returns already-deserialized JSON, MariaDB a string — the adapter
+ *   accepts both, just as it accepts SQLite's TEXT.
  *
- * Le client doit rendre les dates en chaînes (`dateStrings`) : le contrat parle
- * de chaînes, pas d'objets Date. La fabrique d'adaptateurs s'en charge.
+ * The client must return dates as strings (`dateStrings`): the contract talks
+ * about strings, not Date objects. The adapter factory takes care of it.
  */
 
 import { normalizeConfigObject } from './configShape.js'
@@ -46,13 +46,13 @@ export interface MysqlClient {
   ): Promise<{ insertId: number; affectedRows: number }>
 }
 
-/** Ce qu'une connexion mysql2/promise expose, décrit par sa forme pour n'avoir
- *  à importer le pilote ni ici ni dans les tests. */
+/** What a mysql2/promise connection exposes, described by its shape so the
+ *  driver need not be imported here or in the tests. */
 interface Queryable {
   query(sql: string, params?: unknown[]): Promise<unknown[]>
 }
 
-/** Adapte une connexion mysql2 au peu que `MysqlStore` attend d'un client. */
+/** Adapts a mysql2 connection to the little `MysqlStore` expects from a client. */
 export function mysqlClient(conn: Queryable): MysqlClient {
   return {
     all: async (sql, params = []) => {
@@ -83,10 +83,10 @@ function parseConfig<T extends { config?: unknown }>(row: T): T {
 }
 
 /**
- * MySQL rend une colonne JSON déjà désérialisée, MariaDB une chaîne : on
- * normalise `template` en objet pour que l'API relaie la même forme partout.
- * Absent ou illisible → la clé disparaît (et non `template: null`), l'app
- * retombe alors sur son rendu générique.
+ * MySQL returns an already-deserialized JSON column, MariaDB a string: we
+ * normalize `template` to an object so the API relays the same shape everywhere.
+ * Absent or unreadable → the key disappears (not `template: null`), the app then
+ * falls back to its generic rendering.
  */
 function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   const base: RegistryEntry = {
@@ -113,9 +113,9 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
-/** MySQL rejette le « T » / « Z » d'ISO 8601 dans un DATETIME : les connectors
- *  envoient des dates ISO (via l'API), c'est à l'adaptateur de les traduire —
- *  pas à chaque appelant de le savoir. */
+/** MySQL rejects ISO 8601's "T" / "Z" in a DATETIME: connectors send ISO dates
+ *  (via the API), it is up to the adapter to translate them — not for every
+ *  caller to know. */
 function toMysqlDateTime(iso: string): string {
   return new Date(iso).toISOString().slice(0, 23).replace('T', ' ')
 }
@@ -131,14 +131,14 @@ export class MysqlStore implements DataStore {
     return (await this.all<T>(sql, params))[0] ?? null
   }
 
-  // ── Découverte ────────────────────────────────────────────────────────────
-  // Un provider « existe » dès qu'il a une ligne dans `provider_registry`
-  // (écrite par `registerProvider`) ou du contenu dans `connector_item` — le
-  // premier des deux qu'un connector écrit le rend déjà visible, chaque
-  // source tolérant l'absence de l'autre.
+  // ── Discovery ─────────────────────────────────────────────────────────────
+  // A provider "exists" as soon as it has a row in `provider_registry` (written
+  // by `registerProvider`) or content in `connector_item` — whichever a
+  // connector writes first already makes it visible, each source tolerating the
+  // absence of the other.
 
-  /** Auto-cicatrisation : la table peut manquer si aucun connector ne s'est
-   *  encore jamais enregistré sur cette base. */
+  /** Self-healing: the table can be missing if no connector has ever registered
+   *  on this database yet. */
   private async ensureProviderRegistryTable(): Promise<void> {
     await this.db
       .run(
@@ -191,7 +191,7 @@ export class MysqlStore implements DataStore {
         return true
       }
     } catch {
-      // table absente : retombe sur la deuxième source
+      // table missing: fall back to the second source
     }
     try {
       return Boolean(
@@ -209,10 +209,10 @@ export class MysqlStore implements DataStore {
     if (names.length === 0) return []
     const where = `WHERE name IN (${placeholders(names.length)})`
 
-    // On dégrade colonne par colonne : `retention_days` peut manquer sur un
-    // registre créé avant la feature de rétention et pas encore retouché par un
-    // write. Surtout ne pas retomber directement sur « registre vide » —  les
-    // apps perdraient `template` (icônes + mise en forme) et `flux_approval`.
+    // We degrade column by column: `retention_days` can be missing on a
+    // registry created before the retention feature and not yet touched by a
+    // write. Above all, do not fall straight back to "empty registry" — the apps
+    // would lose `template` (icons + formatting) and `flux_approval`.
     try {
       return (
         await this.all<RegistryEntry>(
@@ -221,7 +221,7 @@ export class MysqlStore implements DataStore {
         )
       ).map(normalizeRegistryRow)
     } catch {
-      // colonne ou table absente : on réessaie sans retention_days
+      // column or table missing: retry without retention_days
     }
 
     try {
@@ -232,7 +232,7 @@ export class MysqlStore implements DataStore {
         )
       ).map(normalizeRegistryRow)
     } catch {
-      // Table absente : registre vide, pas une erreur. Voir listProviders().
+      // Table missing: empty registry, not an error. See listProviders().
       return []
     }
   }
@@ -247,8 +247,8 @@ export class MysqlStore implements DataStore {
     )
   }
 
-  // ── Contenu ───────────────────────────────────────────────────────────────
-  // Une seule table `connector_item`, partagée par tous les providers.
+  // ── Content ───────────────────────────────────────────────────────────────
+  // A single `connector_item` table, shared by every provider.
 
   private async ensureConnectorItemTable(): Promise<void> {
     await this.db
@@ -272,7 +272,7 @@ export class MysqlStore implements DataStore {
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    // Pas de DISTINCT ON : une fenêtre fait le même travail (MySQL 8, MariaDB 10.2).
+    // No DISTINCT ON: a window function does the same job (MySQL 8, MariaDB 10.2).
     return this.all<ContentRow>(
       `SELECT * FROM (
          SELECT t.*, ROW_NUMBER() OVER (
@@ -316,7 +316,7 @@ export class MysqlStore implements DataStore {
     )
   }
 
-  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+  // ── Collected content (writes, reserved for connectors) ──────────────────
 
   async insertContentItems(
     provider: string,
@@ -373,8 +373,8 @@ export class MysqlStore implements DataStore {
       'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
       [provider],
     )
-    // Normalisé (configShape.ts) : un connector ne doit jamais recevoir un
-    // `config` qui ne serait pas un objet.
+    // Normalized (configShape.ts): a connector must never receive a `config`
+    // that would not be an object.
     return rows.map((r) => ({ ...r, config: normalizeConfigObject(r.config) }))
   }
 
@@ -382,8 +382,8 @@ export class MysqlStore implements DataStore {
     id: number,
     partial: Record<string, unknown>,
   ): Promise<void> {
-    // Lu-normalisé-fusionné-réécrit, pas `JSON_MERGE_PATCH` : cohérent avec
-    // les autres adaptateurs face à un `config` dégradé (voir configShape.ts).
+    // Read-normalized-merged-rewritten, not `JSON_MERGE_PATCH`: consistent with
+    // the other adapters when facing a degraded `config` (see configShape.ts).
     const row = await this.one<{ config: unknown }>(
       'SELECT config FROM repository WHERE id = ?',
       [id],
@@ -396,8 +396,8 @@ export class MysqlStore implements DataStore {
     ])
   }
 
-  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
-   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  /** `log` has no `provider` column: it is derived from `repository_id`
+   *  elsewhere. The parameter stays for symmetry with the route-side call. */
   async logConnectorError(
     _provider: string,
     repositoryId: number | null,
@@ -430,7 +430,7 @@ export class MysqlStore implements DataStore {
     )
   }
 
-  // ── Maintenance : rétention du contenu ────────────────────────────────────
+  // ── Maintenance: content retention ───────────────────────────────────────
 
   async getContentRetentionDefault(): Promise<number | null> {
     await this.db
@@ -495,7 +495,7 @@ export class MysqlStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
-    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    // `template` omitted (undefined): we do not touch the one already stored.
     if (entry.template === undefined) {
       await this.db.run(
         `INSERT INTO provider_registry (name, display_name, sort_order)
@@ -523,7 +523,7 @@ export class MysqlStore implements DataStore {
     )
   }
 
-  // ── Clés d'API des connectors ───────────────────────────────────────────────
+  // ── Connector API keys ─────────────────────────────────────────────────────
 
   private async ensureConnectorKeyTable(): Promise<void> {
     await this.db
@@ -608,8 +608,8 @@ export class MysqlStore implements DataStore {
     type: string
     config: Record<string, unknown>
   }): Promise<Source> {
-    // `url = url` ne change rien mais fait de l'URL déjà connue un succès, comme
-    // le DO UPDATE de Postgres : la source existante est renvoyée telle quelle.
+    // `url = url` changes nothing but turns an already-known URL into a success, like
+    // Postgres's DO UPDATE: the existing source is returned as-is.
     await this.db.run(
       `INSERT INTO repository (url, type, config) VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE url = url`,
@@ -617,7 +617,7 @@ export class MysqlStore implements DataStore {
     )
     const row = await this.findSourceByUrl(input.url)
     if (!row)
-      throw new Error(`repository "${input.url}" introuvable après insertion`)
+      throw new Error(`repository "${input.url}" not found after insert`)
     return row
   }
 
@@ -636,8 +636,8 @@ export class MysqlStore implements DataStore {
       'SELECT id FROM repository WHERE url = ? AND id <> ?',
       [url, id],
     )
-    // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
-    // dire « déjà pris » : les routes s'y réfèrent pour répondre 409.
+    // Code 23505 comes from Postgres, but it has become the agreed way to
+    // say "already taken": routes rely on it to answer 409.
     if (taken) {
       throw Object.assign(new Error('url already in use'), { code: '23505' })
     }
@@ -680,7 +680,7 @@ export class MysqlStore implements DataStore {
     }))
   }
 
-  // ── Abonnements ───────────────────────────────────────────────────────────
+  // ── Subscriptions ─────────────────────────────────────────────────────────
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
     return (
@@ -764,7 +764,7 @@ export class MysqlStore implements DataStore {
     return Number(row?.count ?? 0)
   }
 
-  // ── Utilisateurs et comptes ───────────────────────────────────────────────
+  // ── Users and accounts ────────────────────────────────────────────────────
 
   async createCredentialUser(user: NewUser): Promise<{ id: string } | null> {
     const taken = await this.one(
@@ -793,7 +793,7 @@ export class MysqlStore implements DataStore {
     return { id: userId }
   }
 
-  // ── Inscriptions en attente ───────────────────────────────────────────────
+  // ── Pending sign-ups ──────────────────────────────────────────────────────
 
   async createPendingUser(
     input: NewPendingUser,
@@ -849,7 +849,7 @@ export class MysqlStore implements DataStore {
     return res.affectedRows > 0
   }
 
-  // ── Bases de données secondaires ─────────────────────────────────────────
+  // ── Secondary databases ────────────────────────────────────────────────
 
   async listDataSources(): Promise<DataSourceRow[]> {
     return this.all<DataSourceRow>(
@@ -967,8 +967,8 @@ export class MysqlStore implements DataStore {
         'SELECT id FROM `user` WHERE LOWER(email) = ? AND id <> ?',
         [patch.email, userId],
       )
-      // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
-      // dire « e-mail déjà pris » : les routes s'y réfèrent pour répondre 409.
+      // Code 23505 comes from Postgres, but it has become the agreed way to
+      // say "e-mail already taken": routes rely on it to answer 409.
       if (taken)
         throw Object.assign(new Error('email already in use'), {
           code: '23505',
@@ -1048,7 +1048,7 @@ export class MysqlStore implements DataStore {
     )
   }
 
-  // ── Administrateurs ───────────────────────────────────────────────────────
+  // ── Administrators ────────────────────────────────────────────────────────
 
   async findAdminByEmail(email: string) {
     const row = await this.one<{
@@ -1132,7 +1132,7 @@ export class MysqlStore implements DataStore {
     return Number(row?.count ?? 0)
   }
 
-  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+  // ── Flux requests (approval queue) ───────────────────────────────────────
 
   async findPendingFluxRequest(userId: string, provider: string, url: string) {
     return this.one<{ id: string }>(
@@ -1156,7 +1156,7 @@ export class MysqlStore implements DataStore {
       'SELECT id, user_id, provider, url, status, created_at FROM flux_request WHERE id = ?',
       [id],
     )
-    if (!row) throw new Error('flux_request introuvable après insertion')
+    if (!row) throw new Error('flux_request not found after insert')
     return row
   }
 

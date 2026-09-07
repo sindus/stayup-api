@@ -3,22 +3,22 @@ import { getStore } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
-// File d'approbation générique : une demande = un utilisateur veut un flux inédit
-// pour un provider en mode `manual`. Un admin l'accepte (le flux est créé et
-// l'utilisateur abonné) ou la refuse.
+// Generic approval queue: one request = a user wants a brand-new flux for a
+// provider in `manual` mode. An admin approves it (the flux is created and the
+// user subscribed) or rejects it.
 export const fluxRequestsAdminRoute = new Hono<{ Bindings: Bindings }>()
 
 fluxRequestsAdminRoute.use('*', authMiddleware)
 fluxRequestsAdminRoute.use('*', requireAdmin)
 
-// GET /ui/flux-requests — toutes les demandes, avec l'e-mail du demandeur.
+// GET /ui/flux-requests — every request, with the requester's e-mail.
 fluxRequestsAdminRoute.get('/', async (c) => {
   const requests = await (await getStore(c.env.DATABASE_URL)).listFluxRequests()
   return c.json({ requests })
 })
 
-// POST /ui/flux-requests/:id/approve — crée/réutilise la source et abonne le
-// demandeur. Body optionnel : `{ config }` pour préconfigurer le flux.
+// POST /ui/flux-requests/:id/approve — creates/reuses the source and subscribes
+// the requester. Optional body: `{ config }` to preconfigure the flux.
 fluxRequestsAdminRoute.post('/:id/approve', async (c) => {
   const requestId = c.req.param('id')
   const store = await getStore(c.env.DATABASE_URL)
@@ -34,8 +34,8 @@ fluxRequestsAdminRoute.post('/:id/approve', async (c) => {
     .catch(() => ({}) as { config?: Record<string, unknown> })
   const config = body.config ?? {}
 
-  // Ne jamais convertir en `request.provider` un dépôt déjà suivi sous un autre
-  // provider : ses abonnés perdraient leur flux.
+  // Never convert to `request.provider` a repository already tracked under
+  // another provider: its subscribers would lose their flux.
   const conflicting = await store.findSourceByUrl(request.url)
   if (conflicting && conflicting.type !== request.provider) {
     return c.json(

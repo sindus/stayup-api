@@ -9,9 +9,9 @@ export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
 
-// GET /connectors/providers — liste légère des providers disponibles (nom +
-// libellé + mode d'approbation), fusionnée sur la base principale et toutes les
-// bases secondaires : une seule entrée par nom de provider.
+// GET /connectors/providers — lightweight list of available providers (name +
+// label + approval mode), merged across the primary database and every
+// secondary database: a single entry per provider name.
 connectorsRoute.get('/providers', async (c) => {
   const primary = await getStore(c.env.DATABASE_URL)
   const secondaries = await openSecondaryStores(primary, c.env.JWT_SECRET)
@@ -20,10 +20,11 @@ connectorsRoute.get('/providers', async (c) => {
     ...secondaries.map((s) => s.store),
   ])
   return c.json({
-    // `template` (manifeste d'affichage déclaré par le provider) n'est présent
-    // que pour ceux qui en publient un ; les apps retombent sinon sur leur
-    // rendu générique. L'API ne l'interprète pas. `fluxApproval` dit à l'app si
-    // l'ajout d'un flux est immédiat (`auto`) ou passe par une demande (`manual`).
+    // `template` (the display manifest declared by the provider) is only
+    // present for those that publish one; otherwise apps fall back to their
+    // generic rendering. The API does not interpret it. `fluxApproval` tells the
+    // app whether adding a flux is immediate (`auto`) or goes through a request
+    // (`manual`).
     providers: providers.map((p) => ({
       name: p.name,
       displayName: p.displayName,

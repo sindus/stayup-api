@@ -37,8 +37,8 @@ const connectionString =
   process.env.DATABASE_URL ??
   `postgres://${process.env.DB_USER ?? 'postgres'}:${process.env.DB_PASSWORD ?? 'postgres'}@${process.env.DB_HOST ?? 'localhost'}:${process.env.DB_PORT ?? '5432'}/${process.env.DB_NAME ?? 'stayup'}`
 
-// Ce script applique le schéma SQL : il est propre à PostgreSQL, contrairement
-// à l'API elle-même. Les autres moteurs ont leur propre façon d'amorcer.
+// This script applies the SQL schema: it is PostgreSQL-specific, unlike the API
+// itself. The other engines have their own way of bootstrapping.
 trackOpenConnections(true)
 const sql = getSql(connectionString)
 

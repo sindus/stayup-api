@@ -11,9 +11,9 @@ export const oauthRoute = new Hono<{ Bindings: Bindings }>()
 
 oauthRoute.get('/oauth/google', async (c) => {
   const mobileRedirectUri = c.req.query('redirect_uri') ?? null
-  // Valeur opaque choisie par le client : renvoyée telle quelle après OAuth
-  // (`&state=`), pour qu'une app multi-instance rattache le token à l'instance
-  // qui a lancé le flux. Scellée dans le state signé, donc non falsifiable.
+  // Opaque value chosen by the client: returned as-is after OAuth (`&state=`),
+  // so a multi-instance app can attach the token to the instance that started
+  // the flow. Sealed inside the signed state, so it cannot be forged.
   const clientState = c.req.query('client_state') ?? null
 
   const state = await sign(
@@ -88,7 +88,7 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     store,
     'google',
     profile.id,
-    // Un e-mail non vérifié ne doit jamais servir à retrouver un compte existant.
+    // An unverified e-mail must never be used to find an existing account.
     profile.verified_email === false ? '' : profile.email,
     profile.name,
     c.env.JWT_SECRET,
@@ -196,9 +196,9 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
       primary: boolean
       verified: boolean
     }[]
-    // Uniquement des adresses vérifiées : GitHub laisse ajouter n'importe quelle
-    // adresse à un compte sans la prouver, et l'ancien repli `emails[0]` permettait
-    // donc de se faire rattacher au compte StayUp d'un tiers.
+    // Verified addresses only: GitHub lets you add any address to an account
+    // without proving it, and the old `emails[0]` fallback therefore let you get
+    // attached to someone else's StayUp account.
     email =
       emails.find((e) => e.primary && e.verified)?.email ??
       emails.find((e) => e.verified)?.email ??
@@ -228,9 +228,9 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
-/** Construit l'URL de retour après OAuth : `?token=` en succès, ou
- *  `?error=pending_approval` si le compte attend une validation admin. Si le
- *  client a fourni un `client_state`, il est renvoyé tel quel en `&state=`. */
+/** Builds the return URL after OAuth: `?token=` on success, or
+ *  `?error=pending_approval` if the account is awaiting admin approval. If the
+ *  client provided a `client_state`, it is returned as-is in `&state=`. */
 function oauthCallbackRedirect(
   env: Bindings,
   redirectUri: string | undefined,
@@ -247,14 +247,15 @@ function oauthCallbackRedirect(
   return `${base}?${parts.join('&')}`
 }
 
-// L'URI de retour est fournie par l'appelant *avant* la signature du state : la
-// signer ne la rend donc pas fiable. Sans liste blanche, `exp://n-importe-quel-hote`
-// suffit à faire livrer le token de la victime chez un tiers.
+// The return URI is provided by the caller *before* the state is signed:
+// signing it therefore does not make it trustworthy. Without an allowlist,
+// `exp://any-host` is enough to have the victim's token delivered to a third
+// party.
 //
-// - `stayup://auth/callback` : le schéma de l'app installée (app.json), URI exacte.
-// - `exp://<hote>:<port>/--/auth/callback` : Expo Go en développement, où l'hôte est
-//   la machine du développeur — donc restreint à la boucle locale et aux plages IP
-//   privées, jamais à un hôte public.
+// - `stayup://auth/callback`: the installed app's scheme (app.json), exact URI.
+// - `exp://<host>:<port>/--/auth/callback`: Expo Go in development, where the
+//   host is the developer's machine — so restricted to the loopback address and
+//   private IP ranges, never a public host.
 const STANDALONE_REDIRECT_URI = 'stayup://auth/callback'
 const EXPO_GO_PATH = '/--/auth/callback'
 
@@ -313,16 +314,16 @@ async function findOrCreateOAuthUser(
   } else {
     const verifiedEmail = normalizeEmail(email)
 
-    // Sans e-mail vérifié, on ne rattache rien : on ouvre un compte neuf avec une
-    // adresse de repli unique, sinon l'unicité de l'e-mail rejette le deuxième
-    // inscrit sans e-mail et tous se retrouveraient sur le même compte.
+    // Without a verified e-mail, we attach nothing: we open a fresh account with
+    // a unique fallback address, otherwise e-mail uniqueness rejects the second
+    // sign-up without an e-mail and they would all end up on the same account.
     const byEmail = verifiedEmail
       ? await store.findUserByEmail(verifiedEmail)
       : null
 
     if (byEmail) {
-      // L'e-mail vérifié correspond à un compte déjà actif : on lie ce provider
-      // à ce compte, aucune validation à demander.
+      // The verified e-mail matches an already-active account: we link this
+      // provider to that account, no approval to ask for.
       userId = byEmail.id
       resolvedName = byEmail.name
       resolvedEmail = verifiedEmail
@@ -330,10 +331,10 @@ async function findOrCreateOAuthUser(
       resolvedEmail =
         verifiedEmail || `${provider}-${providerAccountId}@users.noreply.stayup`
 
-      // Identité neuve + mode `approval` : on met en attente au lieu de créer le
-      // compte. La ligne stocke le provider pour que la validation admin puisse
-      // recréer l'identité à l'identique. Un doublon (déjà en attente) est un
-      // no-op : le résultat est le même, « en attente ».
+      // New identity + `approval` mode: we put it on hold instead of creating
+      // the account. The row stores the provider so admin approval can recreate
+      // the identity identically. A duplicate (already pending) is a no-op: the
+      // result is the same, "pending".
       if (mode === 'approval') {
         await store.createPendingUser({
           name,

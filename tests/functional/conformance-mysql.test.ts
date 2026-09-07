@@ -18,12 +18,12 @@ const BASE = {
   port: Number(process.env.MYSQL_PORT ?? 3306),
   user: process.env.MYSQL_USER ?? 'root',
   password: process.env.MYSQL_PASSWORD ?? 'root',
-  // Le contrat parle de chaînes de dates, pas d'objets Date.
+  // The contract talks about date strings, not Date objects.
   dateStrings: true,
   multipleStatements: true,
 }
 
-/** Une base par cas de test : la suite exige une base vraiment neuve. */
+/** One database per test case: the suite requires a truly fresh database. */
 let counter = 0
 const connections: mysql.Connection[] = []
 const databases: string[] = []
@@ -32,8 +32,8 @@ afterAll(async () => {
   await Promise.all(connections.map((c) => c.end()))
   if (databases.length > 0) {
     const admin = await mysql.createConnection(BASE)
-    // Une base par cas de test (voir plus haut) : à ce nombre, les DROP
-    // séquentiels dépassent le hookTimeout par défaut de Vitest.
+    // One database per test case (see above): at this count, the sequential
+    // DROPs exceed Vitest's default hookTimeout.
     await Promise.all(
       databases.map((name) =>
         admin.query(`DROP DATABASE IF EXISTS \`${name}\``),
@@ -52,8 +52,8 @@ runDataStoreConformance('MySQL', {
     await admin.end()
     databases.push(name)
 
-    // Une seule connexion, pas un pool : START TRANSACTION n'a de sens que si
-    // les requêtes qui suivent empruntent la même.
+    // A single connection, not a pool: START TRANSACTION only makes sense if
+    // the queries that follow use the same one.
     const conn = await mysql.createConnection({ ...BASE, database: name })
     connections.push(conn)
     await conn.query(SCHEMA)
@@ -61,10 +61,10 @@ runDataStoreConformance('MySQL', {
     return new MysqlStore(mysqlClient(conn))
   },
 
-  // Le contenu vit dans la table unique `connector_item` : c'est le contrat
-  // `DataStore` lui-même (registerProvider/insertContentItems) qui sait
-  // l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi,
-  // dates ISO comprises : c'est `MysqlStore` qui les traduit pour MySQL.
+  // Content lives in the single `connector_item` table: it is the `DataStore`
+  // contract itself (registerProvider/insertContentItems) that knows how to
+  // reach it for this engine — the test no longer needs to know it either,
+  // ISO dates included: it is `MysqlStore` that translates them for MySQL.
   async seedProvider(store, provider, rows) {
     await store.registerProvider({ name: provider, displayName: provider })
     await store.insertContentItems(

@@ -1,12 +1,11 @@
 /**
- * Choisit l'adaptateur de base de données à partir de l'URL de connexion.
+ * Picks the database adapter from the connection URL.
  *
- * C'est le seul endroit qui connaît la liste des moteurs pris en charge :
- * ajouter un backend, c'est écrire un adaptateur et l'enregistrer ici.
+ * This is the only place that knows the list of supported engines: adding a
+ * backend means writing an adapter and registering it here.
  *
- * Les pilotes sont chargés à la demande. Un déploiement PostgreSQL n'installe
- * donc jamais le pilote SQLite, et réciproquement — c'est pour ça que cette
- * fonction est asynchrone.
+ * Drivers are loaded on demand. A PostgreSQL deployment therefore never installs
+ * the SQLite driver, and vice versa — that is why this function is async.
  */
 
 import { getSql } from './client.js'
@@ -14,38 +13,38 @@ import type { DataStore } from './port.js'
 import { PostgresStore } from './postgres.js'
 
 /**
- * Charge un pilote à l'exécution sans que l'empaqueteur Workers ne l'embarque.
+ * Loads a driver at runtime without the Workers bundler pulling it in.
  *
- * Un `import('mongodb')` littéral serait résolu à la compilation et le pilote
- * entier finirait dans le bundle déployé sur Cloudflare, où il ne pourra jamais
- * s'exécuter faute de socket TCP. Passer par une variable ne laisse rien à
- * résoudre : sous Node, l'import fonctionne ; sous Workers, il n'est jamais atteint.
+ * A literal `import('mongodb')` would be resolved at build time and the whole
+ * driver would end up in the bundle deployed to Cloudflare, where it can never
+ * run for lack of a TCP socket. Going through a variable leaves nothing to
+ * resolve: under Node the import works; under Workers it is never reached.
  */
 function loadDriver(name: string): Promise<unknown> {
   return import(name)
 }
 
-// Aliasés parce que `typeof import('…')` écrit en ligne se fait recouper par le
-// formateur, qui en sort une syntaxe invalide.
+// Aliased because an inline `typeof import('…')` gets reflowed by the formatter,
+// which turns it into invalid syntax.
 type SqliteDriver = typeof import('better-sqlite3')
 type Mysql2Driver = typeof import('mysql2/promise')
 type MongoDriver = typeof import('mongodb')
 
 interface Adapter {
   schemes: string[]
-  /** Le paquet npm à installer pour ce moteur, s'il n'est pas déjà là. */
+  /** The npm package to install for this engine, if it is not already there. */
   driver?: string
   create: (url: string) => Promise<DataStore>
 }
 
 /**
- * Les moteurs qui ne tournent que sur Node gardent leur connexion.
+ * Engines that only run on Node keep their connection.
  *
- * La règle d'isolation de Workers — interdisant de réutiliser une connexion
- * ouverte par une autre requête, d'où la connexion par appel côté Postgres — ne
- * s'applique qu'à Workers. MongoDB et MySQL y sont de toute façon inatteignables
- * faute de socket TCP : rouvrir une connexion à chaque requête n'y protégerait
- * de rien et coûterait une poignée d'allers-retours.
+ * The Workers isolation rule — forbidding reuse of a connection opened by
+ * another request, hence the per-call connection on the Postgres side — only
+ * applies to Workers. MongoDB and MySQL are unreachable there anyway for lack of
+ * a TCP socket: reopening a connection on every request would protect nothing
+ * and cost a handful of round-trips.
  */
 const kept = new Map<string, Promise<DataStore>>()
 
@@ -55,7 +54,7 @@ function keep(url: string, open: () => Promise<DataStore>): Promise<DataStore> {
 
   const store = open()
   kept.set(url, store)
-  // Un échec ne doit pas rester en cache, sinon la base ne remonte jamais.
+  // A failure must not stay cached, otherwise the database never comes back.
   store.catch(() => kept.delete(url))
   return store
 }
@@ -70,11 +69,11 @@ const ADAPTERS: Adapter[] = [
     driver: 'better-sqlite3',
     create: async (url) => {
       const { SqliteStore } = await import('./sqlite.js')
-      // Module CommonJS : le constructeur arrive sous `default`.
+      // CommonJS module: the constructor arrives under `default`.
       const { default: Database } = (await loadDriver('better-sqlite3')) as {
         default: SqliteDriver
       }
-      // sqlite:///chemin/vers/base.db — ou sqlite::memory:
+      // sqlite:///path/to/db.db — or sqlite::memory:
       const path = url
         .replace(/^sqlite:(\/\/)?/, '')
         .replace(/^file:(\/\/)?/, '')
@@ -94,13 +93,13 @@ const ADAPTERS: Adapter[] = [
       keep(url, async () => {
         const { MysqlStore, mysqlClient } = await import('./mysql.js')
         const mysql = (await loadDriver('mysql2/promise')) as Mysql2Driver
-        // Une seule connexion, pas un pool : les transactions n'ont de sens que
-        // si les requêtes qui les composent empruntent la même.
+        // A single connection, not a pool: transactions only make sense if the
+        // queries that compose them use the same one.
         const conn = await mysql.createConnection({
           uri: url.replace(/^mariadb:/, 'mysql:'),
           dateStrings: true,
         })
-        // Connexion perdue : on la sort du cache pour que la suivante rouvre.
+        // Connection lost: drop it from the cache so the next one reopens.
         conn.on('error', () => kept.delete(url))
         return new MysqlStore(mysqlClient(conn))
       }),
@@ -114,7 +113,7 @@ const ADAPTERS: Adapter[] = [
         const { MongoClient } = (await loadDriver('mongodb')) as MongoDriver
         const client = new MongoClient(url)
         await client.connect()
-        // L'URL doit nommer la base : mongodb://hôte:27017/stayup
+        // The URL must name the database: mongodb://host:27017/stayup
         const db = client.db()
         await ensureIndexes(db)
         return new MongoStore(db)
@@ -125,43 +124,43 @@ const ADAPTERS: Adapter[] = [
 export const SUPPORTED_SCHEMES = ADAPTERS.flatMap((a) => a.schemes)
 
 export async function getStore(connectionString: string): Promise<DataStore> {
-  // Une URL sans schéma reconnu est une erreur de configuration, pas une donnée
-  // d'exécution : mieux vaut le dire tout de suite qu'échouer à la première requête.
+  // A URL with no recognized scheme is a configuration error, not runtime data:
+  // better to say so right away than to fail on the first query.
   const scheme = connectionString.slice(0, connectionString.indexOf(':') + 1)
   const adapter = ADAPTERS.find((a) => a.schemes.includes(scheme))
   if (!adapter) {
     throw new Error(
-      `Base de données non prise en charge : "${scheme || connectionString}". ` +
-        `Schémas reconnus : ${SUPPORTED_SCHEMES.join(', ')}`,
+      `Unsupported database: "${scheme || connectionString}". ` +
+        `Recognized schemes: ${SUPPORTED_SCHEMES.join(', ')}`,
     )
   }
 
   try {
     return await adapter.create(connectionString)
   } catch (err) {
-    // Le cas le plus fréquent : le pilote n'est pas installé. Le dire clairement
-    // vaut mieux qu'un « Cannot find module » sorti du chargeur.
+    // The most common case: the driver is not installed. Saying so clearly
+    // beats a "Cannot find module" thrown by the loader.
     if (
       adapter.driver &&
       (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
     ) {
       throw new Error(
-        `Le pilote "${adapter.driver}" est requis pour ${scheme} mais n'est pas installé. ` +
-          `Lancez : npm install ${adapter.driver}`,
+        `The "${adapter.driver}" driver is required for ${scheme} but is not installed. ` +
+          `Run: npm install ${adapter.driver}`,
       )
     }
     throw err
   }
 }
 
-// ─── Bases secondaires (agrégation multi-sources) ────────────────────────────
+// ─── Secondary databases (multi-source aggregation) ──────────────────────────
 
-/** Le moteur d'une URL de connexion, ou null si le schéma n'est pas reconnu. */
+/** The engine of a connection URL, or null if the scheme is not recognized. */
 export function engineOf(connectionString: string): string | null {
   const scheme = connectionString.slice(0, connectionString.indexOf(':') + 1)
   const adapter = ADAPTERS.find((a) => a.schemes.includes(scheme))
   if (!adapter) return null
-  // Le premier schéma de l'adaptateur sert de nom canonique (`postgres:` etc.).
+  // The adapter's first scheme serves as the canonical name (`postgres:` etc.).
   return adapter.schemes[0].replace(':', '')
 }
 
@@ -173,9 +172,9 @@ export interface OpenedDataSource {
 }
 
 /**
- * Ouvre un store par base secondaire déclarée dans la base principale. Une base
- * injoignable est *ignorée* (avec un log) plutôt que de casser tout le feed :
- * une source externe hors ligne ne doit pas priver l'utilisateur du reste.
+ * Opens one store per secondary database declared in the primary database. An
+ * unreachable database is *skipped* (with a log) rather than breaking the whole
+ * feed: an offline external source must not deprive the user of the rest.
  */
 export async function openSecondaryStores(
   primary: DataStore,

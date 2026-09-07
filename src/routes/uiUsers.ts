@@ -22,14 +22,14 @@ type UserRepo = {
   url: string
   provider: string
   config: Record<string, unknown>
-  /** Renseigné pour un abonnement à un flux d'une base secondaire. */
+  /** Set for a subscription to a flux from a secondary database. */
   data_source_id?: number
   data_source_name?: string
 }
 
-/** Identifiant de lien d'un abonnement externe, transporté par le feed et
- *  reconnu par le DELETE d'abonnement (les bases secondaires n'ont pas d'id de
- *  lien commun avec la principale). */
+/** Link id for an external subscription, carried by the feed and recognized by
+ *  the subscription DELETE (secondary databases have no link id shared with the
+ *  primary one). */
 function externalLinkId(dataSourceId: number, url: string): string {
   return `ext:${dataSourceId}:${encodeURIComponent(url)}`
 }
@@ -56,7 +56,7 @@ async function getFeedForUser(
     store.listExternalSubscriptions(userId),
   ])
 
-  // Contenu local, une clé par provider.
+  // Local content, one key per provider.
   const connectors: Record<string, unknown[]> = Object.fromEntries(
     providers.map((p) => [p.name, [] as unknown[]]),
   )
@@ -69,7 +69,7 @@ async function getFeedForUser(
     )
   }
 
-  // Contenu des bases secondaires : résolu par URL, puis tagué par base.
+  // Secondary databases' content: resolved by URL, then tagged by database.
   const extRepos: UserRepo[] = []
   if (external.length > 0) {
     const secondaries = await openSecondaryStores(store, env.JWT_SECRET)
@@ -163,7 +163,7 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
 })
 
 // ─── Admin-only: pending sign-ups (REGISTRATION_MODE=approval) ──────────────
-// Déclaré avant `/:userId` pour que le segment statique gagne sur le paramètre.
+// Declared before `/:userId` so the static segment wins over the parameter.
 
 // GET /ui/users/pending — list accounts awaiting approval
 uiUsersRoute.get('/pending', requireAdmin, async (c) => {
@@ -208,7 +208,7 @@ uiUsersRoute.post('/pending/:id/approve', requireAdmin, async (c) => {
   }
 
   if (!created) {
-    // L'e-mail a été pris entre-temps (par une autre inscription validée).
+    // The e-mail was taken in the meantime (by another approved sign-up).
     return c.json({ error: 'Email already in use' }, 409)
   }
 
@@ -251,14 +251,14 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const isAdmin = (c.get('jwtPayload') as { role?: string })?.role === 'admin'
 
-  // Contrôle en amont : un body ne contenant que `password` doit aussi 404
+  // Upfront check: a body containing only `password` must 404 too
   if (!(await store.userExists(userId))) {
     return c.json({ error: 'User not found' }, 404)
   }
 
-  // Changer son propre mot de passe exige de connaître l'actuel : sinon un token
-  // volé suffit à verrouiller le compte de son propriétaire. Un admin garde la
-  // réinitialisation sans preuve, c'est le sens de son rôle.
+  // Changing your own password requires knowing the current one: otherwise a
+  // stolen token is enough to lock the owner out of their account. An admin
+  // keeps proof-free reset — that is the point of the role.
   if (body.password && !isAdmin) {
     if (!body.currentPassword) {
       return c.json({ error: 'currentPassword is required' }, 400)
@@ -277,13 +277,14 @@ uiUsersRoute.patch('/:userId', requireSelfOrAdmin, async (c) => {
     const email: string | null =
       body.email === undefined ? null : normalizeEmail(body.email)
     try {
-      // L'adaptateur garde `account.account_id` aligné sur la nouvelle adresse.
+      // The adapter keeps `account.account_id` aligned with the new address.
       await store.updateUser(userId, {
         name: name ?? undefined,
         email: email ?? undefined,
       })
     } catch (err) {
-      // Sans ça, un e-mail déjà pris remonte en 500 au lieu d'un conflit lisible.
+      // Without this, an already-taken e-mail surfaces as a 500 instead of a
+      // readable conflict.
       if ((err as { code?: string }).code === '23505') {
         return c.json({ error: 'Email already in use' }, 409)
       }
@@ -355,12 +356,11 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
 
   const store = await getStore(c.env.DATABASE_URL)
 
-  // `repository` est partagée par tous les abonnés d'une même URL. Un ON CONFLICT
-  // qui écrase `type`/`config` laissait n'importe quel utilisateur convertir le
-  // dépôt d'autrui (un changelog devenait un rss, ses abonnés perdaient leur flux,
-  // et les lignes connector_* orphelines cassaient ensuite sa suppression). On ne
-  // touche donc jamais à une ligne existante : on la réutilise, ou on refuse si
-  // elle appartient à un autre provider.
+  // `repository` is shared by every subscriber of the same URL. An ON CONFLICT
+  // that overwrote `type`/`config` let any user convert someone else's
+  // repository (a changelog became an rss, its subscribers lost their flux, and
+  // the orphaned connector_* rows then broke its deletion). So we never touch an
+  // existing row: we reuse it, or refuse if it belongs to another provider.
   const existing = await store.findSourceByUrl(body.url)
 
   if (existing && existing.type !== body.provider) {
@@ -370,9 +370,9 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     )
   }
 
-  // Un flux inédit pour un provider en mode `manual` passe par la file
-  // d'approbation — sauf si c'est un admin qui agit, ou si le flux existe déjà
-  // (déjà vérifié : s'y abonner ne demande pas d'approbation).
+  // A brand-new flux for a provider in `manual` mode goes through the approval
+  // queue — unless an admin is acting, or the flux already exists (already
+  // checked: subscribing to it needs no approval).
   if (!existing && !isAdmin) {
     const [meta] = await store.readRegistry([body.provider])
     if (meta?.flux_approval === 'manual') {
@@ -429,9 +429,9 @@ uiUsersRoute.delete(
     const linkId = c.req.param('linkId') as string
     const store = await getStore(c.env.DATABASE_URL)
 
-    // Abonnement à un flux d'une base secondaire : identifié par (base, URL), pas
-    // par un id de lien local. On se contente de désabonner — la base est en
-    // lecture seule, rien à purger.
+    // Subscription to a flux from a secondary database: identified by
+    // (database, URL), not by a local link id. We just unsubscribe — the
+    // database is read-only, nothing to purge.
     const ext = parseExternalLinkId(linkId)
     if (ext) {
       const removed = await store.unsubscribeExternal(
@@ -447,13 +447,13 @@ uiUsersRoute.delete(
 
     if (!link) return c.json({ error: 'Feed not found' }, 404)
 
-    // Retirer un flux de sa liste = se désabonner, rien de plus. La source
-    // `repository` et son contenu `connector_*` (produits par le collecteur) ne
-    // sont jamais supprimés ici : purger dès qu'une source n'a plus d'abonné
-    // détruisait de l'historique sur un état transitoire (retrait puis ré-ajout)
-    // et courait contre le collecteur qui écrit encore dedans. La suppression
-    // durable d'une source reste réservée aux endpoints admin
-    // `DELETE /ui/repositories/:id` et `/ui/repositories/:id/data`.
+    // Removing a flux from your list = unsubscribing, nothing more. The
+    // `repository` source and its `connector_*` content (produced by the
+    // collector) are never deleted here: purging as soon as a source has no
+    // subscriber destroyed history on a transient state (remove then re-add) and
+    // raced the collector still writing into it. Durable deletion of a source
+    // stays reserved for the admin endpoints `DELETE /ui/repositories/:id` and
+    // `/ui/repositories/:id/data`.
     await store.unsubscribeById(linkId)
 
     return c.json({ success: true })

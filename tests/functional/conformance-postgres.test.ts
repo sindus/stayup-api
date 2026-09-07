@@ -18,7 +18,7 @@ const CONNECTION =
 
 const sql = getSql(CONNECTION)
 
-/** Un schéma isolé par cas de test : la suite exige une base vraiment neuve. */
+/** One isolated schema per test case: the suite requires a truly fresh database. */
 let counter = 0
 
 afterAll(async () => {
@@ -32,9 +32,9 @@ function schemaName(n: number): string {
   return `conformance_${n}`
 }
 
-// Chaque cas tourne dans son propre schéma, hors de `public` : c'est ce qui
-// vérifie que la découverte suit `current_schema()` / le search_path, et non
-// un schéma écrit en dur.
+// Each case runs in its own schema, outside `public`: this is what verifies
+// that discovery follows `current_schema()` / the search_path, and not a
+// hardcoded schema.
 async function freshSchema(): Promise<string> {
   const name = schemaName(++counter)
   await sql.unsafe(`DROP SCHEMA IF EXISTS ${name} CASCADE`)
@@ -53,9 +53,9 @@ runDataStoreConformance('PostgreSQL', {
     return new PostgresStore(scoped)
   },
 
-  // Le contenu vit dans la table unique `connector_item` : c'est le contrat
-  // `DataStore` lui-même (registerProvider/insertContentItems) qui sait
-  // l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi.
+  // Content lives in the single `connector_item` table: it is the `DataStore`
+  // contract itself (registerProvider/insertContentItems) that knows how to
+  // reach it for this engine — the test no longer needs to know it either.
   async seedProvider(store, provider, rows) {
     await store.registerProvider({ name: provider, displayName: provider })
     await store.insertContentItems(

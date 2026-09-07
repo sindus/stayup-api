@@ -1,23 +1,23 @@
-# Display templates — rendre un connecteur sans toucher aux apps
+# Display templates — render a connector without touching the apps
 
-Ce document est la **référence complète** pour écrire le template d'affichage d'un
-connecteur StayUp. Après l'avoir lu, tu sais faire afficher tes données sous forme
-de texte, HTML, image, vidéo, **audio**, **galerie**, tableau ou liste — dans
-`stayup-ui` (web), `stayup-desktop` et `stayup-mobile`, **sans écrire une ligne
-dans ces apps**.
+This document is the **complete reference** for writing a StayUp connector's
+display template. After reading it, you know how to render your data as text,
+HTML, image, video, **audio**, **gallery**, table or list — in `stayup-ui`
+(web), `stayup-desktop` and `stayup-mobile`, **without writing a single line in
+those apps**.
 
-- Pour le contrat général d'un connecteur (tables, cron, `--add`…), voir
+- For a connector's general contract (tables, cron, `--add`…), see
   [`self-hosting-and-providers.md`](self-hosting-and-providers.md).
-- Le format est **relayé tel quel** par `GET /connectors/providers` : `stayup-api`
-  ne le lit jamais, ne le valide jamais.
+- The format is **relayed as-is** by `GET /connectors/providers`: `stayup-api`
+  never reads it, never validates it.
 
 ---
 
-## 1. Où vit le template, et le repli « aucun template »
+## 1. Where the template lives, and the "no template" fallback
 
-Le template est un **objet JSON**. Ton collecteur l'envoie à `stayup-api` à chaque
-exécution, dans le corps de `POST /connector-api/<name>/register`, à côté de son
-nom affiché :
+The template is a **JSON object**. Your collector sends it to `stayup-api` on
+every run, in the body of `POST /connector-api/<name>/register`, alongside its
+display name:
 
 ```jsonc
 POST /connector-api/podcast/register
@@ -25,180 +25,181 @@ Authorization: Bearer stayup_conn_…
 {
   "displayName": "Podcasts",
   "sortOrder": 60,
-  "template": { /* l'objet ci-dessous */ }
+  "template": { /* the object below */ }
 }
 ```
 
-`stayup-api` le range tel quel dans la colonne `provider_registry.template`
-(`JSONB` Postgres, `JSON` MySQL, TEXT-JSON SQLite, champ de document MongoDB) — le
-connecteur ne touche jamais la base. `template` n'est remplacé que s'il est
-présent dans le corps : un `register` qui ne l'envoie pas laisse le template
-existant intact.
+`stayup-api` stores it as-is in the `provider_registry.template` column
+(`JSONB` on Postgres, `JSON` on MySQL, TEXT-JSON on SQLite, document field on
+MongoDB) — the connector never touches the database. `template` is only replaced
+if it is present in the body: a `register` that does not send it leaves the
+existing template intact.
 
-En pratique (Python), on garde un dict `DISPLAY_TEMPLATE` et on le passe dans le
-JSON du `register` — les 5 connecteurs `stayup-cmd-*` font exactement ça
-(`stayup-cmd-github-trending/fetch_trending.py` est la référence).
+In practice (Python), you keep a `DISPLAY_TEMPLATE` dict and pass it in the
+`register` JSON — the 5 `stayup-cmd-*` connectors do exactly that
+(`stayup-cmd-github-trending/fetch_trending.py` is the reference).
 
-> **Si un provider n'a pas de template** (colonne `NULL`, JSON illisible, ou
-> `version` non reconnue), les apps affichent le **contenu brut** :
-> - dans la liste : les ~80 premiers caractères de `content`, la date, le nom du
->   provider capitalisé ;
-> - dans le volet de lecture : le nom du provider, `version` s'il existe, la date,
->   puis **`content` en entier, tel quel, en texte**.
+> **If a provider has no template** (column `NULL`, unreadable JSON, or an
+> unrecognized `version`), the apps show the **raw content**:
+> - in the list: the first ~80 characters of `content`, the date, the
+>   capitalized provider name;
+> - in the reading pane: the provider name, `version` if present, the date, then
+>   **`content` in full, as-is, as text**.
 >
-> Donc si `content` est une chaîne JSON, l'utilisateur voit le JSON. Un template
-> (ou un `content` en texte lisible) est fortement recommandé.
+> So if `content` is a JSON string, the user sees the JSON. A template (or a
+> readable-text `content`) is strongly recommended.
 
 ---
 
-## 2. Structure générale
+## 2. Overall structure
 
 ```jsonc
 {
-  "version": 1,                 // obligatoire ; une autre valeur → repli générique
+  "version": 1,                 // required; any other value → generic fallback
 
-  "display": { … },             // identité : nom, icône, couleur, ordre
-  "item":    { … },             // comment LIRE une ligne connector_<nom>
-  "list":    { … },             // le rendu d'une ENTRÉE dans la colonne liste
-  "detail":  { … },             // le rendu dans le VOLET DE LECTURE
-  "form":    { … }              // optionnel — le champ « ajouter un flux »
+  "display": { … },             // identity: name, icon, color, order
+  "item":    { … },             // how to READ a connector_<name> row
+  "list":    { … },             // rendering of an ENTRY in the list column
+  "detail":  { … },             // rendering in the READING PANE
+  "form":    { … }              // optional — the "add a flux" field
 }
 ```
 
-Aucune de ces sections n'est strictement obligatoire à part `version`, mais sans
-`item.fields` + `list` + `detail` tu n'auras rien d'utile.
+None of these sections is strictly required except `version`, but without
+`item.fields` + `list` + `detail` you will get nothing useful.
 
 ---
 
-## 3. Accesseurs — le mini-langage
+## 3. Accessors — the mini-language
 
-Partout où le schéma dit « **Accesseur** », tu peux mettre une des formes
-suivantes. Un accesseur est évalué **contre une ligne de contenu et sa source**.
+Everywhere the schema says "**Accessor**", you can put one of the forms below.
+An accessor is evaluated **against a content row and its source**.
 
-### 3.1 Un chemin (chaîne)
+### 3.1 A path (string)
 
-`"a.b.c"` — segments séparés par des points. **Racines spéciales :**
+`"a.b.c"` — segments separated by dots. **Special roots:**
 
-| Préfixe | Désigne |
+| Prefix | Refers to |
 |---|---|
-| `$row.` | la ligne DB brute : `datetime`, `executed_at`, `version`, `id`, `params`, … |
-| `$source.` | la `repository` : `url`, `type`, `config` (et ce que `config` contient) |
-| `$vars.` | une variable calculée déclarée dans `item.vars` |
-| `$self` | la **valeur de base courante** (utile en `gallery` sur un tableau d'URLs nues) |
-| `content` (le mot seul) | la chaîne `content` brute, sans la parser |
+| `$row.` | the raw DB row: `datetime`, `executed_at`, `version`, `id`, `params`, … |
+| `$source.` | the `repository`: `url`, `type`, `config` (and what `config` contains) |
+| `$vars.` | a computed variable declared in `item.vars` |
+| `$self` | the **current base value** (useful in `gallery` over an array of bare URLs) |
+| `content` (the word alone) | the raw `content` string, without parsing it |
 
-Tout le reste est cherché **dans le `content` parsé** si `item.parseContentAsJson`
-vaut `true`, sinon dans `$row`.
+Everything else is looked up **in the parsed `content`** if
+`item.parseContentAsJson` is `true`, otherwise in `$row`.
 
-Si un segment tombe sur une chaîne qui ressemble à du JSON (ex. `params` stocké en
-texte), il est parsé automatiquement pour continuer le chemin
-(`$row.params.url` marche que `params` soit un objet ou une chaîne).
+If a segment lands on a string that looks like JSON (e.g. `params` stored as
+text), it is parsed automatically to continue the path (`$row.params.url` works
+whether `params` is an object or a string).
 
-### 3.2 Un gabarit (chaîne contenant `{…}`)
+### 3.2 A template (string containing `{…}`)
 
 `"{owner}/{name}"`, `"GitHub Trending — {window}"`.
-Chaque `{jeton}` est un **chemin** résolu comme ci-dessus (donc `{repo}`,
-`{$row.version}`, `{$source.url}` sont valides). Un jeton vide → chaîne vide.
+Each `{token}` is a **path** resolved as above (so `{repo}`, `{$row.version}`,
+`{$source.url}` are valid). An empty token → empty string.
 
-Une chaîne qui contient `{` est **automatiquement** traitée comme un gabarit.
+A string that contains `{` is **automatically** treated as a template.
 
-### 3.3 Un objet
+### 3.3 An object
 
 ```jsonc
 { "path": "since",
-  "format": "compactNumber",       // optionnel — voir §3.5
-  "cases": { "daily": "today" },   // optionnel — remplace la valeur si elle matche
-  "fallback": "n/a" }              // optionnel — si le résultat est vide
+  "format": "compactNumber",       // optional — see §3.5
+  "cases": { "daily": "today" },   // optional — replaces the value if it matches
+  "fallback": "n/a" }              // optional — if the result is empty
 
 { "template": "{owner}/{name}", "format": "urlSlug" }
 ```
 
-### 3.4 Un tableau (repli en cascade)
+### 3.4 An array (cascading fallback)
 
-`["link", "url"]` → le **premier accesseur non vide** gagne. Chaque élément est
-lui-même un accesseur.
+`["link", "url"]` → the **first non-empty accessor** wins. Each element is itself
+an accessor.
 
-### 3.5 Les `format`
+### 3.5 The `format`s
 
-| `format` | Effet |
+| `format` | Effect |
 |---|---|
-| `compactNumber` | `129000` → `129K` (locale du visiteur) |
-| `date` | date seule, format moyen |
-| `datetime` | date + heure |
-| `relativeTime` | même rendu que `datetime` pour l'instant |
-| `urlSlug` | `https://github.com/vercel/next.js/` → `vercel/next.js` (pathname sans `/` de bord) |
+| `compactNumber` | `129000` → `129K` (visitor's locale) |
+| `date` | date only, medium format |
+| `datetime` | date + time |
+| `relativeTime` | same rendering as `datetime` for now |
+| `urlSlug` | `https://github.com/vercel/next.js/` → `vercel/next.js` (pathname without edge `/`) |
 | `hostname` | `https://www.css-tricks.com/x` → `css-tricks.com` |
-| `domain` | `https://blog.stephane-robert.info/rss.xml` → `blog.stephane-robert` (hostname sans `www.` ni le dernier segment ; approximatif sur les TLD composés type `.co.uk`) |
-| `stripMarkdown` | retire `#`, `**…**`, `` `…` `` |
-| `upper` / `lower` | casse |
+| `domain` | `https://blog.stephane-robert.info/rss.xml` → `blog.stephane-robert` (hostname without `www.` or the last segment; approximate on compound TLDs like `.co.uk`) |
+| `stripMarkdown` | removes `#`, `**…**`, `` `…` `` |
+| `upper` / `lower` | case |
 
 ---
 
-## 4. `item` — comment lire une ligne
+## 4. `item` — how to read a row
 
 ```jsonc
 "item": {
-  "parseContentAsJson": true,      // JSON.parse(row.content) devient la base des chemins
-  "vars": {                        // accesseurs calculés une fois, réutilisables en {nom}
+  "parseContentAsJson": true,      // JSON.parse(row.content) becomes the base for paths
+  "vars": {                        // accessors computed once, reusable as {name}
     "window": { "path": "since",
                 "cases": { "daily": "today", "weekly": "this week", "monthly": "this month" } }
   },
-  "fields": {                      // chaque valeur est un Accesseur
+  "fields": {                      // each value is an Accessor
     "title":     "GitHub Trending — {window}",
     "subtitle":  "{count} repositories",
     "summary":   "The {count} repositories trending {window} on GitHub.",
     "url":       "url",
-    "timestamp": "fetched_at",     // défaut : $row.datetime ?? $row.executed_at
-    "image":     "thumbnail",      // vignette / visuel principal
-    "embedUrl":  null,             // URL d'un lecteur embarqué (vidéo)
+    "timestamp": "fetched_at",     // default: $row.datetime ?? $row.executed_at
+    "image":     "thumbnail",      // thumbnail / main visual
+    "embedUrl":  null,             // URL of an embedded player (video)
     "version":   "$row.version"
   }
 }
 ```
 
-`vars` ne peut pas référencer d'autres `vars`. Les champs `image` / `embedUrl` /
-`version` sont facultatifs ; `title` / `timestamp` sont ceux qui comptent le plus.
+`vars` cannot reference other `vars`. The `image` / `embedUrl` / `version`
+fields are optional; `title` / `timestamp` are the ones that matter most.
 
 ---
 
-## 5. `list` — l'entrée dans la colonne
+## 5. `list` — the entry in the column
 
 ```jsonc
 "list": {
-  "layout": "row",          // "row" (défaut) | "media"
-  "primary":   "title",     // ligne principale
-  "secondary": "subtitle",  // sous-ligne (mono, couleur d'accent)
-  "meta":      "timestamp", // la date, à droite
-  "thumbnail": "image",     // layout "media" uniquement — la vignette
-  "snippet":   "summary"    // layout "row" — une ligne d'extrait sous le sous-titre
+  "layout": "row",          // "row" (default) | "media"
+  "primary":   "title",     // main line
+  "secondary": "subtitle",  // sub-line (mono, accent color)
+  "meta":      "timestamp", // the date, on the right
+  "thumbnail": "image",     // "media" layout only — the thumbnail
+  "snippet":   "summary"    // "row" layout — an excerpt line under the subtitle
 }
 ```
 
-- **`row`** : titre + sous-titre + date + extrait optionnel. C'est le changelog,
-  le RSS, le scrap, github-trending.
-- **`media`** : vignette à gauche + titre 2 lignes + chaîne + date. C'est YouTube.
+- **`row`**: title + subtitle + date + optional excerpt. This is changelog,
+  RSS, scrap, github-trending.
+- **`media`**: thumbnail on the left + 2-line title + string + date. This is
+  YouTube.
 
-Les valeurs de `primary`/`secondary`/`meta`/`thumbnail`/`snippet` sont des **noms
-de champs** définis dans `item.fields` (pas des accesseurs bruts).
+The values of `primary`/`secondary`/`meta`/`thumbnail`/`snippet` are **field
+names** defined in `item.fields` (not raw accessors).
 
 ---
 
-## 6. `detail` — le volet de lecture
+## 6. `detail` — the reading pane
 
-`detail.mode` pilote tout. Champs communs à tous les modes :
+`detail.mode` drives everything. Fields common to all modes:
 
-| Champ | Type | Rôle |
+| Field | Type | Role |
 |---|---|---|
-| `mode` | enum | `text` (défaut) · `html` · `media` · `audio` · `gallery` · `table` · `link-list` |
-| `title` | Accesseur | titre du volet (défaut : `item.fields.title`) |
-| `subtitle` | Accesseur | sous-titre (jamais repris de la liste — mets-le ici si tu le veux) |
-| `badge` | Accesseur | petite pastille colorée (ex. la version) |
-| `openUrl` | Accesseur | cible du bouton « ouvrir » (défaut : `item.fields.url`) — **doit résoudre en URL http(s) absolue**, sinon le bouton n'apparaît pas |
-| `openLabel` | chaîne | libellé du bouton (défaut : « Open link » traduit) |
+| `mode` | enum | `text` (default) · `html` · `media` · `audio` · `gallery` · `table` · `link-list` |
+| `title` | Accessor | pane title (default: `item.fields.title`) |
+| `subtitle` | Accessor | subtitle (never carried over from the list — put it here if you want it) |
+| `badge` | Accessor | small colored pill (e.g. the version) |
+| `openUrl` | Accessor | target of the "open" button (default: `item.fields.url`) — **must resolve to an absolute http(s) URL**, otherwise the button does not appear |
+| `openLabel` | string | button label (default: "Open link", translated) |
 
 ### 6.1 `mode: "text"`
 
-Corps en texte pré-formaté (retours à la ligne respectés).
+Pre-formatted text body (line breaks respected).
 
 ```jsonc
 "detail": {
@@ -211,20 +212,20 @@ Corps en texte pré-formaté (retours à la ligne respectés).
 }
 ```
 
-`body` (Accesseur) est le contenu ; défaut `item.fields.summary`.
+`body` (Accessor) is the content; default `item.fields.summary`.
 
 ### 6.2 `mode: "html"`
 
-Comme `text`, mais `body` est du **HTML**.
-- **web (ui, desktop)** : rendu tel quel (mêmes styles que le RSS actuel).
-- **mobile** : les balises sont **retirées**, on affiche le texte.
+Like `text`, but `body` is **HTML**.
+- **web (ui, desktop)**: rendered as-is (same styles as the current RSS).
+- **mobile**: the tags are **stripped**, the text is shown.
 
 ```jsonc
 "detail": { "mode": "html", "title": "title", "body": "summary",
             "openUrl": "link", "openLabel": "Read article" }
 ```
 
-### 6.3 `mode: "media"` — image ou vidéo
+### 6.3 `mode: "media"` — image or video
 
 ```jsonc
 "detail": {
@@ -238,63 +239,64 @@ Comme `text`, mais `body` est du **HTML**.
 }
 ```
 
-- Si `embedUrl` résout une URL d'embed **plausible** (`…/embed/<id>` ou `…?v=<id>`) :
-  - **web** : `<iframe>` 16/9.
-  - **mobile** : pas d'iframe → repli sur `image` + bouton « ouvrir ».
-- Sinon : `image` en 16/9.
-- Toujours : bouton `openUrl`.
+- If `embedUrl` resolves to a **plausible** embed URL (`…/embed/<id>` or
+  `…?v=<id>`):
+  - **web**: 16/9 `<iframe>`.
+  - **mobile**: no iframe → falls back to `image` + "open" button.
+- Otherwise: `image` in 16/9.
+- Always: `openUrl` button.
 
-### 6.4 `mode: "audio"` — épisode / piste
+### 6.4 `mode: "audio"` — episode / track
 
 ```jsonc
 "detail": {
   "mode": "audio",
   "title": "title",
-  "image":    "cover",        // pochette (carrée)
-  "audioUrl": "enclosure",    // URL du fichier / flux audio — http(s) absolue
-  "body":     "notes",        // notes d'épisode (texte)
+  "image":    "cover",        // cover art (square)
+  "audioUrl": "enclosure",    // URL of the audio file / stream — absolute http(s)
+  "body":     "notes",        // episode notes (text)
   "openUrl":  "page",
   "openLabel": "Open episode"
 }
 ```
 
-- **web (ui, desktop)** : pochette + `<audio controls>` natif + notes + bouton.
-- **mobile** : pochette + notes + bouton **« ouvrir »** (le flux s'ouvre dans le
-  lecteur système — pas de lecteur intégré, StayUp Mobile n'embarque pas de
-  module audio natif).
+- **web (ui, desktop)**: cover + native `<audio controls>` + notes + button.
+- **mobile**: cover + notes + **"open"** button (the stream opens in the system
+  player — no built-in player, StayUp Mobile does not bundle a native audio
+  module).
 
-### 6.5 `mode: "gallery"` — plusieurs images
+### 6.5 `mode: "gallery"` — several images
 
 ```jsonc
 "detail": {
   "mode": "gallery",
   "title": "album",
-  "collection": "photos",     // chemin vers un TABLEAU dans le content parsé
-  "image":   "url",           // Accesseur RELATIF à chaque élément
-  "caption": "caption",       // idem, optionnel
-  "rowLink": "url",           // idem, optionnel — rend chaque image cliquable
+  "collection": "photos",     // path to an ARRAY in the parsed content
+  "image":   "url",           // Accessor RELATIVE to each element
+  "caption": "caption",       // same, optional
+  "rowLink": "url",           // same, optional — makes each image clickable
   "openUrl": "album_url",
   "openLabel": "Open album"
 }
 ```
 
-- Chaque élément de `collection` devient une vignette carrée (grille sur web,
-  ligne qui passe à la ligne sur mobile).
-- Si les éléments sont des **URLs nues** (`["https://…/1.jpg", …]`), utilise
+- Each element of `collection` becomes a square thumbnail (grid on web, wrapping
+  row on mobile).
+- If the elements are **bare URLs** (`["https://…/1.jpg", …]`), use
   `"image": "$self"`.
-- `caption` sous l'image ; `rowLink` rend l'image cliquable (ouvre l'URL).
+- `caption` below the image; `rowLink` makes the image clickable (opens the URL).
 
-### 6.6 `mode: "table"` — un tableau embarqué dans une ligne
+### 6.6 `mode: "table"` — a table embedded in a row
 
-Pour quand **une ligne `connector_<nom>` contient une liste** (github-trending : une
-ligne = une fenêtre de 25 dépôts).
+For when **one `connector_<name>` row contains a list** (github-trending: one
+row = one window of 25 repositories).
 
 ```jsonc
 "detail": {
   "mode": "table",
   "title": "Trending {window}",
-  "collection": "repos",        // chemin vers le tableau
-  "rowLink": "url",             // lien par défaut d'une ligne (Accesseur relatif à l'élément)
+  "collection": "repos",        // path to the array
+  "rowLink": "url",             // default link for a row (Accessor relative to the element)
   "columns": [
     { "label": "#",           "field": "rank",         "align": "right", "width": "2.5rem" },
     { "label": "Repository",   "field": "{owner}/{name}", "link": "url", "emphasis": true },
@@ -309,28 +311,28 @@ ligne = une fenêtre de 25 dépôts).
 }
 ```
 
-**Une colonne :**
+**A column:**
 
-| Clé | Type | Effet |
+| Key | Type | Effect |
 |---|---|---|
-| `label` | chaîne | en-tête de colonne |
-| `field` | Accesseur (relatif à l'élément) | la valeur |
-| `link` | Accesseur (relatif à l'élément) | rend la cellule cliquable ; sinon la 1re colonne hérite de `rowLink` |
-| `align` | `"left"` \| `"right"` | alignement (droite = chiffres alignés) |
-| `width` | chaîne CSS | largeur de colonne (web) |
-| `format` | voir §3.5 | formatage de la valeur |
-| `prefix` | chaîne | préfixe (`"+"`) |
-| `muted` / `accent` / `emphasis` / `truncate` | booléens | style (grisé / couleur d'accent / gras / tronqué) |
+| `label` | string | column header |
+| `field` | Accessor (relative to the element) | the value |
+| `link` | Accessor (relative to the element) | makes the cell clickable; otherwise the 1st column inherits `rowLink` |
+| `align` | `"left"` \| `"right"` | alignment (right = aligned numbers) |
+| `width` | CSS string | column width (web) |
+| `format` | see §3.5 | formatting of the value |
+| `prefix` | string | prefix (`"+"`) |
+| `muted` / `accent` / `emphasis` / `truncate` | booleans | style (dimmed / accent color / bold / truncated) |
 
-- **web** : vrai tableau `<table>` défilable horizontalement.
-- **mobile** : **liste de cartes** empilées (une carte par élément, `label: valeur`),
-  car un tableau à colonnes est illisible sur téléphone.
+- **web**: a real `<table>`, horizontally scrollable.
+- **mobile**: **a list of stacked cards** (one card per element, `label: value`),
+  because a multi-column table is unreadable on a phone.
 
 ### 6.7 `mode: "link-list"`
 
-`collection` rendu en simple liste de liens.
-Le libellé vient de `columns[0].field` (défaut `"title"`), l'URL de `rowLink`
-(défaut `"url"`).
+`collection` rendered as a plain list of links.
+The label comes from `columns[0].field` (default `"title"`), the URL from
+`rowLink` (default `"url"`).
 
 ---
 
@@ -338,33 +340,34 @@ Le libellé vient de `columns[0].field` (défaut `"title"`), l'URL de `rowLink`
 
 ```jsonc
 "display": {
-  "name": "GitHub Trending",   // libellé (sidebar, onglets, tuiles) ; sinon display_name
+  "name": "GitHub Trending",   // label (sidebar, tabs, tiles); otherwise display_name
   "icon": { "paths": ["M22 7 13.5 15.5 8.5 10.5 2 17", "M16 7h6v6"],
-            "viewBox": "0 0 24 24", "stroke": true },   // voir §7.1
-  "accent": "#f4b585",         // un hex ; l'app en dérive la version diluée
-  "sortOrder": 50,             // ordre entre providers ; sinon sort_order
-  "feedLabel": { "path": "$source.config.since" }  // voir §7.2
+            "viewBox": "0 0 24 24", "stroke": true },   // see §7.1
+  "accent": "#f4b585",         // a hex; the app derives the diluted version
+  "sortOrder": 50,             // order between providers; otherwise sort_order
+  "feedLabel": { "path": "$source.config.since" }  // see §7.2
 }
 ```
 
-### 7.1 `display.icon` — quatre formes
+### 7.1 `display.icon` — four forms
 
-L'app essaie dans cet ordre :
+The app tries in this order:
 
-| Forme | Exemple | Rendu |
+| Form | Example | Rendering |
 |---|---|---|
-| **objet tracé** | `{ "paths": ["M12 2 L2 7 …"], "viewBox": "0 0 24 24" }` — ou `{ "d": "…" }` pour un seul tracé, `+ "stroke": true` pour un style Lucide/Feather | `<path>` teinté par `accent`, s'adapte au thème. **Recommandé** : copie-colle un `<path d>` de n'importe quel jeu d'icônes |
-| **data-URI** | `"data:image/svg+xml;base64,PHN2Zy…"` ou un PNG base64 | `<img>` embarqué — zéro réseau, mais **couleur figée** (pas de teinte) |
-| **URL d'image** | `"https://cdn.example.com/icon.svg"` | `<img>` distant — marche, mais dépendance réseau, pas de teinte, et le serveur d'icône voit passer chaque visiteur. À éviter si tu peux embarquer le tracé |
-| **clé du jeu intégré** | `"video"`, `"rss"`, `"globe"`, `"table"`, `"book"`, `"changelog"`, `"dot"` | raccourci pour les glyphes déjà fournis |
+| **traced object** | `{ "paths": ["M12 2 L2 7 …"], "viewBox": "0 0 24 24" }` — or `{ "d": "…" }` for a single path, `+ "stroke": true` for a Lucide/Feather style | `<path>` tinted by `accent`, adapts to the theme. **Recommended**: copy-paste a `<path d>` from any icon set |
+| **data URI** | `"data:image/svg+xml;base64,PHN2Zy…"` or a base64 PNG | embedded `<img>` — zero network, but **fixed color** (no tint) |
+| **image URL** | `"https://cdn.example.com/icon.svg"` | remote `<img>` — works, but a network dependency, no tint, and the icon server sees every visitor. Avoid if you can embed the path |
+| **key of the built-in set** | `"video"`, `"rss"`, `"globe"`, `"table"`, `"book"`, `"changelog"`, `"dot"` | shortcut for the glyphs already shipped |
 
-Absent ou non résolu → `dot`. Le SVG-string complet n'est **pas** accepté (surface d'injection).
+Absent or unresolved → `dot`. The full SVG string is **not** accepted (injection
+surface).
 
-### 7.2 `display.feedLabel` — le libellé court d'un flux
+### 7.2 `display.feedLabel` — a flux's short label
 
-Accesseur évalué **contre `$source`** (la `repository` : `url`, `config`, `type`),
-`$row` étant vide. Il donne l'étiquette d'un flux — la même dans la sidebar,
-dans « choisir un flux existant » et partout où un flux est listé.
+Accessor evaluated **against `$source`** (the `repository`: `url`, `config`,
+`type`), with `$row` empty. It gives a flux's label — the same one in the
+sidebar, in "pick an existing flux" and everywhere a flux is listed.
 
 ```jsonc
 "feedLabel": { "path": "$source.url", "format": "urlSlug" }   // → "vercel/next.js"
@@ -372,54 +375,54 @@ dans « choisir un flux existant » et partout où un flux est listé.
 "feedLabel": { "path": "$source.url", "format": "domain" }    // → "blog.stephane-robert"
 "feedLabel": { "path": "$source.config.since" }               // → "daily"
 
-// Une liste d'accesseurs = le premier non-vide gagne. Utile quand le
-// collecteur enregistre un vrai nom dans `config` mais ne l'a pas toujours :
+// An array of accessors = the first non-empty one wins. Useful when the
+// collector records a real name in `config` but does not always have it:
 "feedLabel": [
-  { "path": "$source.config.title" },                  // le <title> du flux si connu
-  { "path": "$source.url", "format": "domain" }         // sinon, le domaine
+  { "path": "$source.config.title" },                  // the flux's <title> if known
+  { "path": "$source.url", "format": "domain" }         // otherwise, the domain
 ]
 ```
 
-Sans `feedLabel` (ou provider sans template) : **repli sur l'URL, schéma et `www.` retirés**.
+Without `feedLabel` (or a provider with no template): **falls back to the URL,
+scheme and `www.` stripped**.
 
-## 8. `form` — le champ « ajouter un flux »
+## 8. `form` — the "add a flux" field
 
-Quand présent, le formulaire d'ajout affiche **un seul champ** pour ce provider et
-construit lui-même l'URL de la `repository`. Sans `form`, l'app garde son champ
-« URL complète » générique.
+When present, the add form shows **a single field** for this provider and builds
+the `repository` URL itself. Without `form`, the app keeps its generic "full
+URL" field.
 
 ```jsonc
 "form": {
   "label": "GitHub repo (owner/repo or URL)",
   "placeholder": "vercel/next.js",
-  "urlTemplate": "https://github.com/{value}/",   // {value} = la saisie transformée
-  "pattern": "^[\\w.-]+/[\\w.-]+$",                // regex de forme, validée côté client
-  "transform": {                                  // normalisation de la saisie, dans cet ordre :
-    "trim": true,                                 //  1. espaces
-    "extract": "github\\.com/([^/]+/[^/]+)",      //  2. si ça matche → garde le groupe 1
-    "stripPrefix": ["https://", "@"],             //  3. préfixes (chaîne ou liste)
+  "urlTemplate": "https://github.com/{value}/",   // {value} = the transformed input
+  "pattern": "^[\\w.-]+/[\\w.-]+$",                // shape regex, validated client-side
+  "transform": {                                  // input normalization, in this order:
+    "trim": true,                                 //  1. whitespace
+    "extract": "github\\.com/([^/]+/[^/]+)",      //  2. if it matches → keep group 1
+    "stripPrefix": ["https://", "@"],             //  3. prefixes (string or list)
     "stripSuffix": [".git", "/"]                  //  4. suffixes
   }
 }
 ```
 
-Règles :
+Rules:
 
-- Si la valeur **après transformation** est déjà une URL `http(s)://`, elle est
-  gardée telle quelle (l'utilisateur a collé une URL complète) et `urlTemplate`
-  est ignoré.
-- `pattern` est purement de forme, côté client. La vraie validation (« ce dépôt
-  existe ») est laissée à la réponse de l'API.
-- `label` / `placeholder` sont en anglais (convention actuelle).
+- If the value **after transformation** is already an `http(s)://` URL, it is
+  kept as-is (the user pasted a full URL) and `urlTemplate` is ignored.
+- `pattern` is purely a shape check, client-side. The real validation ("this
+  repo exists") is left to the API's response.
+- `label` / `placeholder` are in English (current convention).
 
 ---
 
-## 9. Recettes
+## 9. Recipes
 
-Les 5 connecteurs `stayup-cmd-*` sont des recettes complètes lisibles dans leur
-`fetch_*.py` / `check_*.py`. Extraits :
+The 5 `stayup-cmd-*` connectors are complete recipes readable in their
+`fetch_*.py` / `check_*.py`. Excerpts:
 
-### Changelog / releases (texte) — avec `feedLabel` et `form`
+### Changelog / releases (text) — with `feedLabel` and `form`
 
 ```jsonc
 { "version": 1,
@@ -448,12 +451,12 @@ Les 5 connecteurs `stayup-cmd-*` sont des recettes complètes lisibles dans leur
 }
 ```
 
-### Icône fournie par le connecteur
+### Icon provided by the connector
 
 ```jsonc
-// tracé (teintable, recommandé)
+// traced (tintable, recommended)
 "icon": { "d": "M4 4h16v12H4z M8 20h8", "viewBox": "0 0 24 24", "stroke": true }
-// logo couleur embarqué
+// embedded color logo
 "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0i…"
 ```
 
@@ -474,7 +477,7 @@ Les 5 connecteurs `stayup-cmd-*` sont des recettes complètes lisibles dans leur
     "openUrl": "page", "openLabel": "Open episode" } }
 ```
 
-### Flux photo (gallery)
+### Photo feed (gallery)
 
 `content` = `{"album","album_url","photos":[{"url","caption"}]}`.
 
@@ -491,50 +494,51 @@ Les 5 connecteurs `stayup-cmd-*` sont des recettes complètes lisibles dans leur
     "openUrl": "album_url", "openLabel": "Open album" } }
 ```
 
-### « Top N » quotidien (table)
+### Daily "Top N" (table)
 
-Voir `stayup-cmd-github-trending/fetch_trending.py` — c'est la référence `mode: table`.
+See `stayup-cmd-github-trending/fetch_trending.py` — it is the `mode: table`
+reference.
 
 ---
 
-## 10. Web vs React Native — ce qui diffère
+## 10. Web vs React Native — what differs
 
 | | web (ui, desktop) | mobile |
 |---|---|---|
-| `mode: html` | HTML rendu | balises retirées, texte seul |
-| `mode: media` + vidéo | `<iframe>` | vignette + bouton « ouvrir » |
-| `mode: audio` | lecteur `<audio>` intégré | pochette + notes + bouton (lecteur système) |
-| `mode: table` | vrai tableau défilable | liste de cartes empilées |
-| liens | `<a>` / shell Tauri | `Linking.openURL` |
+| `mode: html` | HTML rendered | tags stripped, text only |
+| `mode: media` + video | `<iframe>` | thumbnail + "open" button |
+| `mode: audio` | built-in `<audio>` player | cover + notes + button (system player) |
+| `mode: table` | real scrollable table | list of stacked cards |
+| links | `<a>` / Tauri shell | `Linking.openURL` |
 
-Autrement, tout est identique : mêmes accesseurs, mêmes modes, même repli.
+Otherwise, everything is identical: same accessors, same modes, same fallback.
 
 ---
 
-## 11. Règles de validation & repli
+## 11. Validation & fallback rules
 
-- `version` absente ou ≠ `1` → **repli générique** (contenu brut).
-- JSON illisible dans la colonne → repli générique.
-- Un accesseur qui ne résout rien → chaîne vide (l'élément concerné ne s'affiche pas).
-- `openUrl` qui ne donne pas une URL http(s) absolue et saine → **pas de bouton**
-  (un gabarit dont un `{jeton}` s'est vidé produit `https://host//…`, écarté).
-- `embedUrl` qui ne ressemble pas à une URL d'embed → repli sur l'image.
-- `display.icon` absente ou non résolue → `dot`. Un SVG-string complet est refusé.
-- `display.feedLabel` absente → l'URL du flux, schéma et `www.` retirés.
-- `form.pattern` invalide en tant que regex → ignoré (pas de blocage).
-- Pas de langage d'expression : uniquement chemins, `{}`, `format`, `cases`, tableaux.
+- `version` absent or ≠ `1` → **generic fallback** (raw content).
+- Unreadable JSON in the column → generic fallback.
+- An accessor that resolves to nothing → empty string (the element is not shown).
+- `openUrl` that does not produce a sane absolute http(s) URL → **no button**
+  (a template whose `{token}` emptied produces `https://host//…`, discarded).
+- `embedUrl` that does not look like an embed URL → falls back to the image.
+- `display.icon` absent or unresolved → `dot`. A full SVG string is refused.
+- `display.feedLabel` absent → the flux's URL, scheme and `www.` stripped.
+- `form.pattern` invalid as a regex → ignored (no blocking).
+- No expression language: only paths, `{}`, `format`, `cases`, arrays.
 
 ---
 
 ## 12. Checklist
 
-- [ ] `provider_registry.template` upserté à **chaque exécution** du collecteur.
+- [ ] `provider_registry.template` upserted on **every run** of the collector.
 - [ ] `"version": 1`.
-- [ ] `item.fields.title` et `item.fields.timestamp` renseignés.
-- [ ] Un `list.layout` (`row` ou `media`) cohérent avec le contenu.
-- [ ] Un `detail.mode` adapté ; `openUrl` résout une URL absolue.
-- [ ] Testé : `GET /connectors/providers` renvoie ton `template` après un run.
-- [ ] Testé : l'item s'affiche correctement dans au moins une app (et le repli
-      générique reste correct si tu retires le template).
-- [ ] Les chaînes d'interface du template sont en **anglais** (convention actuelle ;
-      la localisation du chrome est une évolution future).
+- [ ] `item.fields.title` and `item.fields.timestamp` filled in.
+- [ ] A `list.layout` (`row` or `media`) consistent with the content.
+- [ ] A suitable `detail.mode`; `openUrl` resolves an absolute URL.
+- [ ] Tested: `GET /connectors/providers` returns your `template` after a run.
+- [ ] Tested: the item renders correctly in at least one app (and the generic
+      fallback stays correct if you remove the template).
+- [ ] The template's interface strings are in **English** (current convention;
+      localizing the chrome is a future evolution).

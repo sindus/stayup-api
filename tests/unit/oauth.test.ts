@@ -15,7 +15,7 @@ function failedResponse(): Response {
   return { ok: false, json: async () => ({}) } as Response
 }
 
-// State signé comme le fait la route d'autorisation
+// State signed the way the authorization route does it
 async function signedState(
   provider: 'google' | 'github',
   redirectUri?: string,
@@ -43,7 +43,7 @@ function tokenFromRedirect(location: string): string {
   return new URL(location).searchParams.get('token') as string
 }
 
-// Séquence DB d'un utilisateur OAuth inédit :
+// DB sequence for a brand-new OAuth user:
 // SELECT account → SELECT user par email → INSERT user → INSERT account
 const NEW_USER_DB = [[], [], [], []]
 
@@ -57,7 +57,7 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals())
 
-// ─── Google : redirection d'autorisation ──────────────────────────────────────
+// ─── Google: authorization redirect ─────────────────────────────────────────
 
 describe('GET /auth/oauth/google', () => {
   it('redirects to Google with client_id, redirect_uri and signed state', async () => {
@@ -349,9 +349,9 @@ describe('GET /auth/oauth/github/callback', () => {
   })
 })
 
-// ─── findOrCreateOAuthUser : branches de résolution du compte ─────────────────
+// ─── findOrCreateOAuthUser: account-resolution branches ─────────────────────
 
-describe('résolution du compte OAuth', () => {
+describe('OAuth account resolution', () => {
   async function googleCallback() {
     fetchMock
       .mockResolvedValueOnce(okResponse({ access_token: 'at' }))
@@ -367,7 +367,7 @@ describe('résolution du compte OAuth', () => {
   }
 
   it('reuses the existing account without creating a user', async () => {
-    // SELECT account → trouvé, puis SELECT user
+    // SELECT account → found, then SELECT user
     const sql = mockSql([
       [{ user_id: 'existing-user' }],
       [{ name: 'Stored Name', email: 'stored@example.com' }],
@@ -379,14 +379,14 @@ describe('résolution du compte OAuth', () => {
       tokenFromRedirect(res.headers.get('location') as string),
     )
     expect(payload.sub).toBe('existing-user')
-    // Les valeurs en base priment sur celles du provider
+    // The database values take precedence over the provider's
     expect(payload.name).toBe('Stored Name')
     expect(payload.email).toBe('stored@example.com')
-    expect(sql).toHaveBeenCalledTimes(2) // aucun INSERT
+    expect(sql).toHaveBeenCalledTimes(2) // no INSERT
   })
 
   it('links the OAuth account to an existing user matched by email', async () => {
-    // SELECT account → vide, SELECT user par email → trouvé, INSERT account
+    // SELECT account → empty, SELECT user by email → found, INSERT account
     const sql = mockSql([[], [{ id: 'user-by-email', name: 'Alice' }], []])
 
     const res = await googleCallback()
@@ -395,7 +395,7 @@ describe('résolution du compte OAuth', () => {
       tokenFromRedirect(res.headers.get('location') as string),
     )
     expect(payload.sub).toBe('user-by-email')
-    expect(sql).toHaveBeenCalledTimes(3) // pas d'INSERT dans "user"
+    expect(sql).toHaveBeenCalledTimes(3) // no INSERT into "user"
   })
 
   it('creates both the user and the account when nothing matches', async () => {
@@ -457,8 +457,8 @@ describe('résolution du compte OAuth', () => {
   })
 })
 
-// Le redirect_uri est choisi par l'appelant avant la signature du state : seule une
-// liste blanche empêche de faire livrer le token de la victime chez un tiers.
+// The redirect_uri is chosen by the caller before the state is signed: only an
+// allowlist prevents having the victim's token delivered to a third party.
 describe('redirect_uri mobile — liste blanche', () => {
   async function callbackLocation(redirectUri: string): Promise<string> {
     fetchMock

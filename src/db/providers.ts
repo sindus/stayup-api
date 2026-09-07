@@ -1,9 +1,10 @@
 /**
- * Liste des providers disponibles, indépendamment du moteur de base.
+ * List of available providers, independent of the database engine.
  *
- * Un provider existe dès qu'il a un espace de stockage dans la base ; son nom
- * affiché vient du registre, qu'il alimente lui-même. Un provider sans entrée de
- * registre — pas encore démarré, ou registre absent — retombe sur son nom capitalisé.
+ * A provider exists as soon as it has storage space in the database; its display
+ * name comes from the registry, which it populates itself. A provider with no
+ * registry entry — not started yet, or no registry at all — falls back to its
+ * capitalized name.
  */
 
 import type { DataStore } from './port.js'
@@ -11,12 +12,12 @@ import type { DataStore } from './port.js'
 export interface Provider {
   name: string
   displayName: string
-  /** Manifeste d'affichage relayé tel quel depuis `provider_registry.template`. */
+  /** Display manifest relayed as-is from `provider_registry.template`. */
   template?: unknown
-  /** `auto` (ajout de flux immédiat) ou `manual` (demande à valider par un admin). */
+  /** `auto` (flux added immediately) or `manual` (request an admin must approve). */
   flux_approval: 'auto' | 'manual'
-  /** Surcharge de rétention du contenu, en jours, posée par un admin. Absent =
-   *  le provider suit le défaut global de l'instance (voir /ui/maintenance). */
+  /** Content retention override, in days, set by an admin. Absent = the provider
+   *  follows the instance-wide global default (see /ui/maintenance). */
   retention_days?: number
 }
 
@@ -25,11 +26,11 @@ function capitalize(name: string): string {
 }
 
 /**
- * Providers vus par plusieurs bases (principale + secondaires), fusionnés par
- * nom : une seule entrée « rss » même s'il existe dans plusieurs bases. La
- * première occurrence gagne, sauf pour `template` — on garde celui qui en
- * déclare un. Chaque ligne de contenu, elle, reste taguée par sa base (voir le
- * feed).
+ * Providers seen across several databases (primary + secondaries), merged by
+ * name: a single "rss" entry even if it exists in several databases. The first
+ * occurrence wins, except for `template` — we keep whichever one declares it.
+ * Each content row, on the other hand, stays tagged with its own database (see
+ * the feed).
  */
 export async function listMergedProviders(
   stores: DataStore[],
@@ -67,9 +68,8 @@ export async function listProviders(store: DataStore): Promise<Provider[]> {
     }))
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
     .map(({ name, displayName, template, flux_approval, retention_days }) => {
-      // Les clés `template` / `retention_days` n'apparaissent que si elles sont
-      // posées : les consommateurs (et les tests) qui les ignorent voient la
-      // forme d'avant.
+      // The `template` / `retention_days` keys only show up when they are set:
+      // consumers (and tests) that ignore them see the previous shape.
       const p: Provider = { name, displayName, flux_approval }
       if (template != null) p.template = template
       if (retention_days != null) p.retention_days = retention_days

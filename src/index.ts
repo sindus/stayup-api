@@ -2,8 +2,8 @@ import { serve } from '@hono/node-server'
 import app from './app.js'
 import { trackOpenConnections } from './db/client.js'
 
-// Processus long : on suit les connexions pour pouvoir les fermer à l'arrêt.
-// Sur Cloudflare Workers (src/app.ts), le suivi reste désactivé — voir db/client.ts.
+// Long-running process: we track connections so we can close them on shutdown.
+// On Cloudflare Workers (src/app.ts), tracking stays disabled — see db/client.ts.
 trackOpenConnections(true)
 
 const {

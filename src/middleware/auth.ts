@@ -17,8 +17,8 @@ export const requireAdmin = async (c: Context, next: Next) => {
   await next()
 }
 
-/** Réservé au super admin : la gestion des autres admins. Un admin « normal »
- *  (créé depuis l'interface) fait l'opérationnel mais pas ça. */
+/** Reserved for the super admin: managing other admins. A "normal" admin
+ *  (created from the UI) does operational work but not this. */
 export const requireSuperAdmin = async (c: Context, next: Next) => {
   const payload = c.get('jwtPayload') as { role?: string; is_super?: boolean }
   if (payload?.role !== 'admin' || payload?.is_super !== true) {
@@ -28,10 +28,10 @@ export const requireSuperAdmin = async (c: Context, next: Next) => {
 }
 
 /**
- * Auth des connectors : une clé d'API, pas un JWT — ce sont des scripts non
- * interactifs (cron, GitHub Actions), pas des sessions utilisateur. La clé
- * voyage en `Authorization: Bearer <clé>`, comme un JWT, pour rester dans la
- * même convention côté appelant.
+ * Connector auth: an API key, not a JWT — these are non-interactive scripts
+ * (cron, GitHub Actions), not user sessions. The key travels in
+ * `Authorization: Bearer <key>`, like a JWT, to keep the same convention on the
+ * caller side.
  */
 export const connectorAuth = async (c: Context, next: Next) => {
   const header = c.req.header('Authorization') ?? ''
@@ -45,13 +45,13 @@ export const connectorAuth = async (c: Context, next: Next) => {
   if (!key) return c.json({ error: 'Unauthorized' }, 401)
 
   c.set('connectorKey', key)
-  // Best-effort : ne doit jamais faire échouer la requête qu'il accompagne.
+  // Best-effort: must never fail the request it accompanies.
   store.touchConnectorKeyUsage(key.id).catch(() => {})
   await next()
 }
 
-/** Une clé n'agit que sur son propre provider : la clé `rss` ne peut pas
- *  écrire pour `youtube`. À poser après `connectorAuth`. */
+/** A key only acts on its own provider: the `rss` key cannot write for
+ *  `youtube`. Apply after `connectorAuth`. */
 export const requireOwnProvider = async (c: Context, next: Next) => {
   const key = c.get('connectorKey') as { provider: string } | undefined
   const provider = c.req.param('provider')
@@ -62,13 +62,12 @@ export const requireOwnProvider = async (c: Context, next: Next) => {
 }
 
 /**
- * Accès à `/ui/repositories/*` pour un admin (JWT) OU une clé connector — sans
- * quoi un connector qui gère lui-même ses flux (ex. `scrap`/admin.py) aurait
- * besoin d'un vrai compte admin (email + mot de passe) rien que pour ça, un
- * credential bien plus large et non révocable sans changer le mot de passe.
- * Une clé connector reste scopée à son provider : voir `providerScope`, à
- * appliquer dans chaque route pour restreindre l'accès aux repositories de ce
- * seul provider.
+ * Access to `/ui/repositories/*` for an admin (JWT) OR a connector key —
+ * without which a connector that manages its own fluxes (e.g. `scrap`/admin.py)
+ * would need a real admin account (email + password) just for that, a far
+ * broader credential that cannot be revoked without changing the password.
+ * A connector key stays scoped to its provider: see `providerScope`, to apply
+ * in each route to restrict access to that provider's repositories only.
  */
 export const requireAdminOrOwnProviderKey = async (c: Context, next: Next) => {
   const header = c.req.header('Authorization') ?? ''
@@ -92,20 +91,19 @@ export const requireAdminOrOwnProviderKey = async (c: Context, next: Next) => {
   })
 }
 
-/** `null` = admin JWT, accès complet. Une chaîne = clé connector, accès
- *  restreint aux repositories de ce provider. À appeler après
- *  `requireAdminOrOwnProviderKey`. */
+/** `null` = admin JWT, full access. A string = connector key, access restricted
+ *  to that provider's repositories. Call after `requireAdminOrOwnProviderKey`. */
 export const providerScope = (c: Context): string | null => {
   const key = c.get('connectorKey') as { provider: string } | undefined
   return key?.provider ?? null
 }
 
 /**
- * Accès à `POST /ui/maintenance/cleanup` : un admin (JWT) OU le porteur du
- * secret `CLEANUP_SECRET`. Le cron de nettoyage n'est pas une session : il ne
- * peut pas tenir un JWT de 24 h, d'où ce secret long, posé côté serveur, envoyé
- * en `Authorization: Bearer`. Comparaison en temps constant. Si `CLEANUP_SECRET`
- * n'est pas configuré, seul le chemin admin reste ouvert.
+ * Access to `POST /ui/maintenance/cleanup`: an admin (JWT) OR the bearer of the
+ * `CLEANUP_SECRET` secret. The cleanup cron is not a session: it cannot hold a
+ * 24 h JWT, hence this long secret, set server-side, sent as
+ * `Authorization: Bearer`. Constant-time comparison. If `CLEANUP_SECRET` is not
+ * configured, only the admin path stays open.
  */
 export const requireAdminOrCleanupSecret = async (c: Context, next: Next) => {
   const env = c.env as Bindings
@@ -127,7 +125,7 @@ export const requireAdminOrCleanupSecret = async (c: Context, next: Next) => {
   })
 }
 
-/** Comparaison à durée constante de deux chaînes courtes. */
+/** Constant-time comparison of two short strings. */
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
   let diff = 0

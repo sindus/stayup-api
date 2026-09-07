@@ -1,9 +1,9 @@
--- Suppression de la feature Documentation.
--- Script NON exécuté automatiquement — à lancer manuellement :
+-- Removes the Documentation feature.
+-- Script NOT run automatically — run it manually:
 --   psql "$DATABASE_URL" -f scripts/drop-doc.sql
 --
--- Ordre imposé par les clés étrangères : les tables référençant
--- doc_registry doivent tomber avant elle.
+-- Order imposed by foreign keys: the tables referencing doc_registry must be
+-- dropped before it.
 
 DROP TABLE IF EXISTS connector_doc;
 DROP TABLE IF EXISTS user_doc_registry;

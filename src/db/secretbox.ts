@@ -1,13 +1,13 @@
 /**
- * Chiffrement au repos des chaînes de connexion des bases secondaires.
+ * At-rest encryption of secondary databases' connection strings.
  *
- * Une base secondaire (table `data_source`) porte son URL de connexion — un
- * secret. On la chiffre avec une clé dérivée de `JWT_SECRET` (déjà présent
- * partout, jamais commité), en AES-GCM via Web Crypto : ça tourne à l'identique
- * sous Node et sous Cloudflare Workers, contrairement à `node:crypto`.
+ * A secondary database (table `data_source`) carries its connection URL — a
+ * secret. We encrypt it with a key derived from `JWT_SECRET` (already present
+ * everywhere, never committed), using AES-GCM via Web Crypto: it runs
+ * identically under Node and under Cloudflare Workers, unlike `node:crypto`.
  *
- * Format : `enc:v1:<base64(iv(12) ++ ciphertext+tag)>`. Une valeur sans ce
- * préfixe est renvoyée telle quelle — tolérance pour une base remplie à la main.
+ * Format: `enc:v1:<base64(iv(12) ++ ciphertext+tag)>`. A value without this
+ * prefix is returned as-is — tolerance for a database filled in by hand.
  */
 
 const PREFIX = 'enc:v1:'

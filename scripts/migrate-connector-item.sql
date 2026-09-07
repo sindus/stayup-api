@@ -1,19 +1,18 @@
--- Migration ponctuelle : fusionne les 5 tables `connector_<name>` existantes
--- dans la nouvelle table unique `connector_item` (voir schema.sql).
+-- One-off migration: merges the 5 existing `connector_<name>` tables into the
+-- new single `connector_item` table (see schema.sql).
 --
--- Script NON exécuté automatiquement — à lancer manuellement, après avoir
--- appliqué schema.sql (qui crée `connector_item`) :
+-- Script NOT run automatically — run it manually, after applying schema.sql
+-- (which creates `connector_item`):
 --   psql "$DATABASE_URL" -f scripts/migrate-connector-item.sql
 --
--- Les anciennes tables `connector_<name>` ne sont PAS supprimées ici — elles
--- restent en lecture, en filet de sécurité, jusqu'à ce que la bascule des
--- connectors soit validée en prod. Voir scripts/drop-doc.sql pour le script
--- de suppression équivalent, à écrire une fois cette validation faite.
+-- The old `connector_<name>` tables are NOT dropped here — they stay readable,
+-- as a safety net, until the connectors' switchover is validated in prod. See
+-- scripts/drop-doc.sql for the equivalent drop script, to write once that
+-- validation is done.
 --
--- Les `id` d'origine ne sont pas préservés : ils ne sont pas uniques entre les
--- 5 tables sources (chacune a sa propre séquence). Rien ne référence
--- `connector_<name>.id` ailleurs dans le schéma, donc leur réattribution est
--- sans risque.
+-- The original `id`s are not preserved: they are not unique across the 5 source
+-- tables (each has its own sequence). Nothing references `connector_<name>.id`
+-- elsewhere in the schema, so reassigning them is safe.
 
 BEGIN;
 

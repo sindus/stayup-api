@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import app from '../../src/app.js'
 import { closeSql, getSql, trackOpenConnections } from '../../src/db/client.js'
 
-// closeSql() ne ferme que les connexions suivies : le suivi est opt-in.
+// closeSql() only closes tracked connections: tracking is opt-in.
 trackOpenConnections(true)
 import type { Bindings } from '../../src/types.js'
 import { authHeaders, json } from '../helpers.js'

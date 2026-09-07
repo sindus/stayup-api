@@ -9,46 +9,47 @@ CREATE TABLE IF NOT EXISTS repository (
 );
 
 -- ─── Provider registry ──────────────────────────────────────────────────────────
--- Chaque provider (projet indépendant type stayup-cmd-*) possède sa propre table
--- connector_<name> (créée par ce projet, pas par l'API) et déclare ici son nom affiché
--- au démarrage. L'API découvre la liste des providers disponibles via
--- information_schema (tables connector_*) et enrichit avec le display_name trouvé ici.
+-- Each provider (an independent project like stayup-cmd-*) has its own
+-- connector_<name> table (created by that project, not by the API) and declares
+-- its display name here at startup. The API discovers the list of available
+-- providers via information_schema (connector_* tables) and enriches it with the
+-- display_name found here.
 
 CREATE TABLE IF NOT EXISTS provider_registry (
   name          TEXT PRIMARY KEY,
   display_name  TEXT NOT NULL,
   sort_order    INTEGER NOT NULL DEFAULT 100,
-  -- Manifeste d'affichage déclaré par le provider pour les apps (forme libre,
-  -- voir docs/self-hosting-and-providers.md). NULL = les apps rendent en générique.
+  -- Display manifest declared by the provider for the apps (free-form, see
+  -- docs/self-hosting-and-providers.md). NULL = the apps render generically.
   template      JSONB,
-  -- 'auto'  : l'ajout d'un flux par un utilisateur crée la source immédiatement.
-  -- 'manual': l'ajout crée une demande à valider par un admin (voir flux_request).
+  -- 'auto'  : a user adding a flux creates the source immediately.
+  -- 'manual': adding creates a request an admin must approve (see flux_request).
   flux_approval TEXT NOT NULL DEFAULT 'auto',
-  -- Surcharge de rétention du contenu (jours), posée par un admin. NULL = le
-  -- provider suit le défaut global (app_setting.content_retention_days). Sert à
-  -- la purge centralisée, voir routes/maintenance.ts.
+  -- Content retention override (days), set by an admin. NULL = the provider
+  -- follows the global default (app_setting.content_retention_days). Used by the
+  -- centralized purge, see routes/maintenance.ts.
   retention_days INTEGER,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Registre antérieur à la colonne `template` : on l'ajoute sans rien réécrire.
+-- Registry predating the `template` column: we add it without rewriting anything.
 ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;
 
--- Registre antérieur à `retention_days` : ajout idempotent.
+-- Registry predating `retention_days`: idempotent add.
 ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER;
 
--- ─── Réglages d'instance ─────────────────────────────────────────────────────
--- Petit KV pour ce qu'un admin règle et qui n'a pas sa propre table. Aujourd'hui
--- une seule clé : `content_retention_days` (défaut global de rétention du
--- contenu, en jours ; 'off' = purge automatique désactivée ; absent = 30).
+-- ─── Instance settings ─────────────────────────────────────────────────────
+-- A small KV for what an admin configures that has no table of its own. Today a
+-- single key: `content_retention_days` (global content-retention default, in
+-- days; 'off' = automatic purge disabled; absent = 30).
 CREATE TABLE IF NOT EXISTS app_setting (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 
--- Colonne `flux_approval` : ajoutée une seule fois. `scrap` est semé en 'manual'
--- au moment de la création de la colonne uniquement — pour ne jamais réécrire un
--- choix fait ensuite par un admin.
+-- Column `flux_approval`: added once. `scrap` is seeded to 'manual' only when
+-- the column is created — so as never to overwrite a choice an admin makes
+-- afterwards.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -62,11 +63,11 @@ BEGIN
   END IF;
 END $$;
 
--- ─── Contenu collecté par les providers ──────────────────────────────────────
--- Une seule table pour tous les providers (colonne `provider` discriminante),
--- à la place d'une table `connector_<name>` par provider. `content` reste une
--- chaîne opaque : sa forme appartient au provider, l'API ne l'interprète pas
--- (voir db/port.ts). `params` ne sert aujourd'hui qu'à `scrap`.
+-- ─── Content collected by providers ─────────────────────────────────────────
+-- A single table for every provider (discriminating `provider` column), instead
+-- of one `connector_<name>` table per provider. `content` stays an opaque
+-- string: its shape belongs to the provider, the API does not interpret it (see
+-- db/port.ts). `params` is only used by `scrap` today.
 
 CREATE TABLE IF NOT EXISTS connector_item (
   id            SERIAL PRIMARY KEY,
@@ -83,13 +84,13 @@ CREATE TABLE IF NOT EXISTS connector_item (
 CREATE INDEX IF NOT EXISTS connector_item_provider_repo_idx
   ON connector_item (provider, repository_id, executed_at DESC);
 
--- ─── Clés d'API des connectors ────────────────────────────────────────────────
--- Un connector n'a plus d'accès direct à la base : il s'authentifie auprès de
--- l'API avec une clé, scopée à un seul `provider` (voir middleware/auth.ts).
--- `key_hash` est un SHA-256 de la clé — pas bcrypt : c'est un secret déjà à
--- haute entropie généré côté serveur, pas un mot de passe humain à ralentir
--- volontairement. `key_prefix` (8 premiers caractères) permet d'identifier une
--- clé dans l'interface admin sans jamais réafficher le secret complet.
+-- ─── Connector API keys ────────────────────────────────────────────────────
+-- A connector no longer has direct database access: it authenticates against
+-- the API with a key, scoped to a single `provider` (see middleware/auth.ts).
+-- `key_hash` is a SHA-256 of the key — not bcrypt: it is an already high-entropy
+-- secret generated server-side, not a human password to deliberately slow down.
+-- `key_prefix` (first 8 characters) identifies a key in the admin UI without
+-- ever showing the full secret again.
 
 CREATE TABLE IF NOT EXISTS connector_key (
   id           TEXT PRIMARY KEY,
@@ -151,10 +152,9 @@ CREATE TABLE IF NOT EXISTS verification (
 );
 
 -- ─── Pending sign-ups (REGISTRATION_MODE=approval) ───────────────────────────
--- En mode `approval`, un nouveau compte atterrit ici et n'existe pas encore dans
--- "user" : il ne peut pas se connecter. Un admin le valide (ligne recopiée dans
--- "user"/"account") ou le rejette (ligne supprimée). En mode `open` cette table
--- n'est jamais alimentée.
+-- In `approval` mode, a new account lands here and does not exist in "user"
+-- yet: it cannot log in. An admin approves it (row copied into "user"/"account")
+-- or rejects it (row deleted). In `open` mode this table is never populated.
 CREATE TABLE IF NOT EXISTS pending_user (
   id               TEXT PRIMARY KEY,
   name             TEXT NOT NULL,
@@ -166,10 +166,10 @@ CREATE TABLE IF NOT EXISTS pending_user (
 );
 
 -- ─── Admins ───────────────────────────────────────────────────────────────────
--- Identités d'administration, distinctes des comptes utilisateurs (pas de feed,
--- pas d'abonnement). Le premier super admin est créé en ligne de commande
--- (scripts/create-admin.ts) ; les admins « normaux » se gèrent ensuite depuis
--- l'interface. `is_super` = peut gérer les autres admins.
+-- Administration identities, distinct from user accounts (no feed, no
+-- subscription). The first super admin is created from the command line
+-- (scripts/create-admin.ts); "normal" admins are then managed from the UI.
+-- `is_super` = can manage the other admins.
 
 CREATE TABLE IF NOT EXISTS admin (
   id            TEXT PRIMARY KEY,
@@ -191,9 +191,9 @@ CREATE TABLE IF NOT EXISTS user_repository (
 );
 
 -- ─── Secondary data sources ─────────────────────────────────────────────────
--- Bases supplémentaires, en lecture seule, qui ne contiennent que des tables
--- connector_*. L'API agrège leur contenu dans les feeds ; elle n'y écrit jamais.
--- `url_enc` : chaîne de connexion chiffrée (voir db/secretbox.ts).
+-- Extra databases, read-only, that contain only connector_* tables. The API
+-- aggregates their content into the feeds; it never writes to them.
+-- `url_enc`: encrypted connection string (see db/secretbox.ts).
 
 CREATE TABLE IF NOT EXISTS data_source (
   id         SERIAL PRIMARY KEY,
@@ -203,8 +203,8 @@ CREATE TABLE IF NOT EXISTS data_source (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Abonnement d'un utilisateur à un flux vivant dans une base secondaire. Le flux
--- y est identifié par son URL — les id numériques ne traversent pas les bases.
+-- A user's subscription to a flux living in a secondary database. The flux is
+-- identified there by its URL — numeric ids do not cross databases.
 
 CREATE TABLE IF NOT EXISTS external_subscription (
   id             TEXT PRIMARY KEY,
@@ -216,10 +216,10 @@ CREATE TABLE IF NOT EXISTS external_subscription (
   UNIQUE (user_id, data_source_id, source_url)
 );
 
--- ─── Flux requests (file d'approbation) ──────────────────────────────────────
--- Renommée depuis `scrap_request` : la file vaut pour tout provider en mode
--- `manual`, pas seulement le scraping. Le RENAME migre les lignes existantes ;
--- il est sans effet sur une base neuve (la table est alors créée juste après).
+-- ─── Flux requests (approval queue) ────────────────────────────────────────
+-- Renamed from `scrap_request`: the queue applies to any provider in `manual`
+-- mode, not just scraping. The RENAME migrates existing rows; it has no effect
+-- on a fresh database (the table is then created right after).
 
 ALTER TABLE IF EXISTS scrap_request RENAME TO flux_request;
 
@@ -232,5 +232,5 @@ CREATE TABLE IF NOT EXISTS flux_request (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Lignes migrées de `scrap_request` : elles n'ont pas la colonne `provider`.
+-- Rows migrated from `scrap_request`: they lack the `provider` column.
 ALTER TABLE flux_request ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'scrap';

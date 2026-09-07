@@ -1,18 +1,18 @@
 /**
- * `repository.config` a porté, sur des bases Postgres existantes, un bug de
- * double sérialisation (voir `repairConfig` dans postgres.ts) : une config
- * autrefois stockée comme chaîne JSON, puis fusionnée avec l'opérateur `||`
- * contre un objet, ne produit pas un objet fusionné — `||` ne fusionne par
- * clé que deux objets ; face à un scalaire (une chaîne) et un objet, il
- * enveloppe le scalaire dans un tableau à un élément et concatène. Le
- * résultat observé en production : `["{\"max_scraps\":5}", {"title": "…"}]`
- * au lieu de `{"max_scraps": 5, "title": "…"}`.
+ * On existing Postgres databases, `repository.config` carried a double-
+ * serialization bug (see `repairConfig` in postgres.ts): a config once stored
+ * as a JSON string, then merged with the `||` operator against an object, does
+ * not produce a merged object — `||` only merges two objects key by key; given
+ * a scalar (a string) and an object, it wraps the scalar in a one-element array
+ * and concatenates. The result seen in production:
+ * `["{\"max_scraps\":5}", {"title": "…"}]` instead of
+ * `{"max_scraps": 5, "title": "…"}`.
  *
- * Cette fonction reconstruit un objet plat à partir de n'importe laquelle de
- * ces formes dégradées (objet, tableau, chaîne JSON, ou vide), sans perdre
- * les clés qu'elles portent encore — utilisée par `mergeSourceConfig` sur les
- * 4 adaptateurs pour fusionner sans jamais composer la corruption, et la
- * réparer au passage la prochaine fois qu'un connector touche la ligne.
+ * This function rebuilds a flat object from any of those degraded shapes
+ * (object, array, JSON string, or empty), without losing the keys they still
+ * carry — used by `mergeSourceConfig` on all 4 adapters to merge without ever
+ * compounding the corruption, and to repair it along the way the next time a
+ * connector touches the row.
  */
 export function normalizeConfigObject(raw: unknown): Record<string, unknown> {
   if (raw == null) return {}

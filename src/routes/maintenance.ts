@@ -9,15 +9,15 @@ import {
 import type { Bindings } from '../types.js'
 
 /**
- * Nettoyage centralisé du contenu collecté. La rétention n'est plus pilotée par
- * les connectors : un admin fixe un défaut global (`GET`/`PATCH /retention`) et,
- * au besoin, une surcharge par provider ; un cron (GitHub Actions) déclenche la
- * purge (`POST /cleanup`) avec `CLEANUP_SECRET`.
+ * Centralized cleanup of collected content. Retention is no longer driven by the
+ * connectors: an admin sets a global default (`GET`/`PATCH /retention`) and, if
+ * needed, a per-provider override; a cron (GitHub Actions) triggers the purge
+ * (`POST /cleanup`) with `CLEANUP_SECRET`.
  */
 export const maintenanceRoute = new Hono<{ Bindings: Bindings }>()
 
-/** `null` (désactiver), ou un entier de jours ≥ 1. Rejette 0 (purge tout) et
- *  les non-entiers. */
+/** `null` (disable), or an integer number of days ≥ 1. Rejects 0 (purges
+ *  everything) and non-integers. */
 function parseDays(value: unknown): number | null | undefined {
   if (value === null) return null
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
@@ -26,8 +26,8 @@ function parseDays(value: unknown): number | null | undefined {
   return value
 }
 
-// POST /cleanup — purge le contenu expiré de tous les providers. Admin OU
-// porteur de CLEANUP_SECRET (le cron). Idempotent : rejouable sans risque.
+// POST /cleanup — purges expired content for every provider. Admin OR bearer of
+// CLEANUP_SECRET (the cron). Idempotent: safe to replay.
 maintenanceRoute.post('/cleanup', requireAdminOrCleanupSecret, async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const purged = await store.purgeExpiredContent()
@@ -37,7 +37,7 @@ maintenanceRoute.post('/cleanup', requireAdminOrCleanupSecret, async (c) => {
 
 maintenanceRoute.use('/retention', authMiddleware, requireAdmin)
 
-// GET /retention — le défaut global + la surcharge éventuelle de chaque provider.
+// GET /retention — the global default + each provider's override, if any.
 maintenanceRoute.get('/retention', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const [defaultDays, providers] = await Promise.all([
@@ -49,7 +49,7 @@ maintenanceRoute.get('/retention', async (c) => {
     providers: providers.map((p) => ({
       name: p.name,
       displayName: p.displayName,
-      // `retention_days` absent = suit le défaut global.
+      // `retention_days` absent = follows the global default.
       retention_days: p.retention_days ?? null,
     })),
   })

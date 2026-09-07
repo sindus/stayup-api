@@ -29,8 +29,8 @@ adminRepositoriesRoute.post('/', async (c) => {
 
   const store = await getStore(c.env.DATABASE_URL)
 
-  // Création explicite par un admin : si l'URL existe déjà, on met à jour sa
-  // config, mais jamais son type — le convertir romprait les abonnés existants.
+  // Explicit creation by an admin: if the URL already exists, we update its
+  // config, but never its type — converting it would break existing subscribers.
   const existing = await store.findSourceByUrl(body.url)
   if (existing && existing.type !== body.type) {
     return c.json(
@@ -54,9 +54,9 @@ adminRepositoriesRoute.post('/', async (c) => {
 })
 
 // PATCH /:repoId — update an existing repository by id, url and/or config.
-// Distinct from POST / (upsert by url) : celle-ci cible une ligne existante
-// et peut changer son URL en place, ce qu'un upsert-par-url ne permet pas
-// (un nouvel URL y créerait une seconde ligne au lieu de renommer la première).
+// Distinct from POST / (upsert by url): this one targets an existing row and can
+// change its URL in place, which an upsert-by-url cannot (a new URL there would
+// create a second row instead of renaming the first).
 adminRepositoriesRoute.patch('/:repoId', async (c) => {
   const repoId = Number.parseInt(c.req.param('repoId') as string, 10)
   if (Number.isNaN(repoId))

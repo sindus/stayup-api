@@ -3,7 +3,7 @@ import { closeSql, getSql, trackOpenConnections } from '../../src/db/client.js'
 
 const CONNECTION_STRING = 'postgres://user:pass@localhost:5432/db'
 
-// closeSql() ne ferme que les connexions suivies : le suivi est opt-in.
+// closeSql() only closes tracked connections: tracking is opt-in.
 trackOpenConnections(true)
 
 afterEach(async () => {
@@ -39,9 +39,9 @@ describe('closeSql', () => {
   })
 })
 
-// Le choix du moteur se fait sur le schéma de l'URL : c'est le point d'entrée du
-// support multi-base, et une URL non reconnue doit se voir refuser tout de suite
-// plutôt que d'échouer à la première requête.
+// The engine is chosen from the URL scheme: it is the entry point of multi-
+// database support, and an unrecognized URL must be refused right away rather
+// than failing on the first query.
 describe('getStore', () => {
   it('accepts sqlite, which loads its driver on demand', async () => {
     const { getStore } = await import('../../src/db/store.js')
@@ -63,7 +63,7 @@ describe('getStore', () => {
       '../../src/db/store.js'
     )
     for (const url of ['redis://x/y', 'cassandra://x/y', 'nonsense']) {
-      await expect(getStore(url)).rejects.toThrow(/non prise en charge/)
+      await expect(getStore(url)).rejects.toThrow(/Unsupported database/)
     }
     expect(SUPPORTED_SCHEMES).toContain('postgres:')
   })

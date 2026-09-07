@@ -1,23 +1,21 @@
 /**
- * Adaptateur MongoDB — la démonstration que le contrat ne suppose pas de SQL.
+ * MongoDB adapter — the proof that the contract does not assume SQL.
  *
- * Rien de ce que fait l'API n'exige des tables. Ce qu'il lui faut, c'est
- * pouvoir découvrir les providers, lire leur contenu et tenir des comptes et
- * des abonnements. Ici :
+ * Nothing the API does requires tables. What it needs is to be able to discover
+ * providers, read their content and keep accounts and subscriptions. Here:
  *
- * - la découverte liste les collections `connector_*` au lieu d'interroger
- *   information_schema ;
- * - « la dernière ligne par source » est une agrégation `$group` + `$first`,
- *   là où Postgres écrit `DISTINCT ON` ;
- * - il n'y a pas de clé auto-incrémentée : `repository._id` est un entier tiré
- *   d'un document compteur, parce que le contrat — et donc les providers —
- *   désignent une source par un nombre ;
- * - il n'y a pas de contrainte de clé étrangère : supprimer un utilisateur
- *   supprime explicitement ce qui pendait à lui, ce que ON DELETE CASCADE
- *   faisait tout seul.
+ * - discovery lists the `connector_*` collections instead of querying
+ *   information_schema;
+ * - "the latest row per source" is a `$group` + `$first` aggregation, where
+ *   Postgres writes `DISTINCT ON`;
+ * - there is no auto-incremented key: `repository._id` is an integer drawn from
+ *   a counter document, because the contract — and therefore the providers —
+ *   refer to a source by a number;
+ * - there is no foreign-key constraint: deleting a user explicitly deletes
+ *   what hung off it, which ON DELETE CASCADE did on its own.
  *
- * Règle de correspondance, valable pour toutes les collections : les champs
- * portent le nom des colonnes SQL, et `_id` porte la clé primaire.
+ * Mapping rule, valid for every collection: fields carry the SQL column names,
+ * and `_id` carries the primary key.
  */
 
 import type { Collection, Db, Document } from 'mongodb'
@@ -44,20 +42,20 @@ import type {
 } from './port.js'
 
 /**
- * Nos documents portent une clé primaire explicite — un entier pour une source,
- * un UUID ailleurs — et non l'ObjectId que le pilote suppose par défaut.
+ * Our documents carry an explicit primary key — an integer for a source, a UUID
+ * elsewhere — not the ObjectId the driver assumes by default.
  */
 interface Stored extends Document {
   _id: string | number
 }
 
-/** Code d'erreur MongoDB pour une violation d'index unique. */
+/** MongoDB error code for a unique-index violation. */
 const DUPLICATE_KEY = 11000
 
 /**
- * Les lignes de contenu doivent avoir la même forme que sous SQL, où la clé
- * s'appelle `id`. On expose donc `_id` sous ce nom, sans écraser un `id` que le
- * provider aurait lui-même écrit.
+ * Content rows must have the same shape as under SQL, where the key is called
+ * `id`. So we expose `_id` under that name, without overwriting an `id` the
+ * provider may have written itself.
  */
 function toRow(doc: Document): ContentRow {
   const { _id, ...rest } = doc
@@ -75,7 +73,7 @@ function toSource(doc: Document): Source {
   }
 }
 
-/** Comparaison d'e-mail insensible à la casse, comme `lower(email) = …` en SQL. */
+/** Case-insensitive e-mail comparison, like `lower(email) = …` in SQL. */
 function sameEmail(email: string): Document {
   return { $expr: { $eq: [{ $toLower: '$email' }, email.toLowerCase()] } }
 }
@@ -85,9 +83,9 @@ function nowIso(): string {
 }
 
 /**
- * Crée les index dont l'API a besoin : l'unicité d'une URL de source et d'un
- * e-mail est une règle du contrat, pas une commodité. À appeler une fois à
- * l'ouverture de la base — c'est ce que fait la fabrique d'adaptateurs.
+ * Creates the indexes the API needs: the uniqueness of a source URL and an
+ * e-mail is a rule of the contract, not a convenience. Call once when opening
+ * the database — that is what the adapter factory does.
  */
 export async function ensureIndexes(db: Db): Promise<void> {
   await db.collection('repository').createIndex({ url: 1 }, { unique: true })
@@ -111,7 +109,7 @@ export async function ensureIndexes(db: Db): Promise<void> {
   await db
     .collection('connector_key')
     .createIndex({ key_hash: 1 }, { unique: true })
-  // Migration douce : renomme l'ancienne collection AVANT de toucher la nouvelle.
+  // Gentle migration: rename the old collection BEFORE touching the new one.
   const names = (
     await db.listCollections({}, { nameOnly: true }).toArray()
   ).map((c) => c.name)
@@ -130,7 +128,7 @@ export class MongoStore implements DataStore {
     return this.db.collection<Stored>(name)
   }
 
-  /** Suite d'entiers pour `repository._id`, faute de colonne auto-incrémentée. */
+  /** Integer sequence for `repository._id`, for lack of an auto-incremented column. */
   private async nextId(name: string): Promise<number> {
     const doc = await this.db
       .collection<{ _id: string; seq: number }>('counters')
@@ -142,10 +140,10 @@ export class MongoStore implements DataStore {
     return doc?.seq ?? 1
   }
 
-  // ── Découverte ────────────────────────────────────────────────────────────
-  // Un provider « existe » dès qu'il a un document dans `provider_registry`
-  // (écrit par `registerProvider`) ou du contenu dans `connector_item` — le
-  // premier des deux qu'un connector écrit le rend déjà visible.
+  // ── Discovery ─────────────────────────────────────────────────────────────
+  // A provider "exists" as soon as it has a document in `provider_registry`
+  // (written by `registerProvider`) or content in `connector_item` — whichever
+  // a connector writes first already makes it visible.
 
   async listProviderNames(): Promise<string[]> {
     const registered = await this.col('provider_registry')
@@ -166,8 +164,8 @@ export class MongoStore implements DataStore {
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
     if (names.length === 0) return []
-    // Une collection absente rend simplement zéro document : le registre vide
-    // n'est pas une erreur, ici on n'a même pas à le rattraper.
+    // A missing collection simply yields zero documents: an empty registry is
+    // not an error, here we do not even have to catch it.
     const rows = await this.col('provider_registry')
       .find({ _id: { $in: names } })
       .toArray()
@@ -178,7 +176,7 @@ export class MongoStore implements DataStore {
         sort_order: r.sort_order as number,
         flux_approval: r.flux_approval === 'manual' ? 'manual' : 'auto',
       }
-      // `template` n'est relayé que si le provider en a déclaré un.
+      // `template` is only relayed if the provider declared one.
       if (r.template != null) entry.template = r.template
       const retention = Number(r.retention_days)
       if (Number.isFinite(retention) && r.retention_days != null) {
@@ -198,16 +196,16 @@ export class MongoStore implements DataStore {
     )
   }
 
-  // ── Contenu ───────────────────────────────────────────────────────────────
-  // Une seule collection `connector_item`, partagée par tous les providers.
+  // ── Content ───────────────────────────────────────────────────────────────
+  // A single `connector_item` collection, shared by every provider.
 
-  /** Date de tri : celle du contenu si le provider l'a écrite, sinon la collecte. */
+  /** Sort date: the content's if the provider wrote one, otherwise the collection's. */
   private static sortKey(withDatetime: boolean): Document {
     const input = withDatetime
       ? { $ifNull: ['$datetime', '$executed_at'] }
       : '$executed_at'
-    // Les providers écrivent des dates ISO ou des dates BSON : on accepte les
-    // deux, et une valeur illisible se contente de passer en dernier.
+    // Providers write ISO dates or BSON dates: we accept both, and an
+    // unreadable value simply ends up last.
     return {
       $convert: { input, to: 'date', onError: null, onNull: null },
     }
@@ -273,16 +271,16 @@ export class MongoStore implements DataStore {
     })
   }
 
-  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+  // ── Collected content (writes, reserved for connectors) ──────────────────
 
   async insertContentItems(
     provider: string,
     items: ContentItemInput[],
   ): Promise<void> {
     if (items.length === 0) return
-    // Pas de `_id` explicite ici, à la différence des autres collections :
-    // `allContent` trie par `_id`, et un ObjectId auto-généré grandit dans
-    // l'ordre d'insertion — un UUID aléatoire ne le garantirait pas.
+    // No explicit `_id` here, unlike the other collections: `allContent` sorts
+    // by `_id`, and an auto-generated ObjectId grows in insertion order — a
+    // random UUID would not guarantee that.
     await this.db.collection('connector_item').insertMany(
       items.map((item) => ({
         provider,
@@ -325,16 +323,16 @@ export class MongoStore implements DataStore {
       .find({ type: provider })
       .sort({ _id: 1 })
       .toArray()
-    // Normalisé (configShape.ts) : un connector ne doit jamais recevoir un
-    // `config` qui ne serait pas un objet.
+    // Normalized (configShape.ts): a connector must never receive a `config`
+    // that would not be an object.
     return rows.map((r) => ({
       ...toSource(r),
       config: normalizeConfigObject(r.config),
     }))
   }
 
-  /** Lu, normalisé (voir configShape.ts), fusionné, réécrit — cohérent avec
-   *  les autres adaptateurs face à un `config` qui ne serait pas un objet. */
+  /** Read, normalized (see configShape.ts), merged, rewritten — consistent
+   *  with the other adapters when facing a `config` that is not an object. */
   async mergeSourceConfig(
     id: number,
     partial: Record<string, unknown>,
@@ -348,8 +346,8 @@ export class MongoStore implements DataStore {
     )
   }
 
-  /** `log` n'a pas de champ `provider` : elle se déduit de `repository_id`
-   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  /** `log` has no `provider` field: it is derived from `repository_id`
+   *  elsewhere. The parameter stays for symmetry with the route-side call. */
   async logConnectorError(
     _provider: string,
     repositoryId: number | null,
@@ -369,8 +367,8 @@ export class MongoStore implements DataStore {
     repositoryId: number,
     retentionDays: number,
   ): Promise<void> {
-    // Comparaison de chaînes ISO, comme `executed_at` est stocké — cohérent
-    // avec les autres adaptateurs.
+    // ISO string comparison, since `executed_at` is stored that way —
+    // consistent with the other adapters.
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString()
@@ -381,7 +379,7 @@ export class MongoStore implements DataStore {
     })
   }
 
-  // ── Maintenance : rétention du contenu ────────────────────────────────────
+  // ── Maintenance: content retention ───────────────────────────────────────
 
   async getContentRetentionDefault(): Promise<number | null> {
     const row = await this.col('app_setting').findOne({
@@ -437,7 +435,7 @@ export class MongoStore implements DataStore {
   }
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
-    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    // `template` omitted (undefined): we do not touch the one already stored.
     const set: Document = {
       display_name: entry.displayName,
       updated_at: nowIso(),
@@ -457,7 +455,7 @@ export class MongoStore implements DataStore {
     )
   }
 
-  // ── Clés d'API des connectors ───────────────────────────────────────────────
+  // ── Connector API keys ─────────────────────────────────────────────────────
 
   async createConnectorKey(input: NewConnectorKey): Promise<{ id: string }> {
     const id = crypto.randomUUID()
@@ -545,8 +543,8 @@ export class MongoStore implements DataStore {
     try {
       await this.col('repository').insertOne(doc as Stored)
     } catch (err) {
-      // Deux requêtes ont créé la même source en même temps : l'index unique
-      // tranche, et celle qui perd relit la gagnante plutôt que d'échouer.
+      // Two requests created the same source at once: the unique index
+      // decides, and the loser reads the winner back rather than failing.
       if ((err as { code?: number }).code !== DUPLICATE_KEY) throw err
       const raced = await this.findSourceByUrl(input.url)
       if (raced) return raced
@@ -572,8 +570,8 @@ export class MongoStore implements DataStore {
       url,
       _id: { $ne: id },
     })
-    // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
-    // dire « déjà pris » : les routes s'y réfèrent pour répondre 409.
+    // Code 23505 comes from Postgres, but it has become the agreed way to
+    // say "already taken": routes rely on it to answer 409.
     if (taken) {
       throw Object.assign(new Error('url already in use'), { code: '23505' })
     }
@@ -642,7 +640,7 @@ export class MongoStore implements DataStore {
     }))
   }
 
-  // ── Abonnements ───────────────────────────────────────────────────────────
+  // ── Subscriptions ─────────────────────────────────────────────────────────
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
     const rows = await this.col('user_repository')
@@ -716,7 +714,7 @@ export class MongoStore implements DataStore {
     try {
       await this.col('user_repository').insertOne(link as Stored)
     } catch (err) {
-      // Déjà abonné : l'index unique le dit, inutile de lire avant d'écrire.
+      // Already subscribed: the unique index says so, no need to read before writing.
       if ((err as { code?: number }).code === DUPLICATE_KEY) return null
       throw err
     }
@@ -749,7 +747,7 @@ export class MongoStore implements DataStore {
     })
   }
 
-  // ── Utilisateurs et comptes ───────────────────────────────────────────────
+  // ── Users and accounts ────────────────────────────────────────────────────
 
   async createCredentialUser(user: NewUser): Promise<{ id: string } | null> {
     const existing = await this.col('user').findOne(sameEmail(user.email))
@@ -776,15 +774,15 @@ export class MongoStore implements DataStore {
         updated_at: now,
       } as Stored)
     } catch (err) {
-      // Pas de transaction sur une instance seule : on défait le compte à demi
-      // créé plutôt que de laisser un utilisateur sans moyen de se connecter.
+      // No transaction on a standalone instance: we undo the half-created
+      // account rather than leaving a user with no way to log in.
       await this.col('user').deleteOne({ _id: id })
       throw err
     }
     return { id }
   }
 
-  // ── Inscriptions en attente ───────────────────────────────────────────────
+  // ── Pending sign-ups ──────────────────────────────────────────────────────
 
   async createPendingUser(
     input: NewPendingUser,
@@ -804,7 +802,7 @@ export class MongoStore implements DataStore {
         created_at: nowIso(),
       } as Stored)
     } catch (err) {
-      // Course avec l'index unique : deux inscriptions du même e-mail.
+      // Race with the unique index: two sign-ups with the same e-mail.
       if ((err as { code?: number }).code === DUPLICATE_KEY) return null
       throw err
     }
@@ -846,7 +844,7 @@ export class MongoStore implements DataStore {
     return res.deletedCount > 0
   }
 
-  // ── Bases de données secondaires ─────────────────────────────────────────
+  // ── Secondary databases ────────────────────────────────────────────────
 
   async listDataSources(): Promise<DataSourceRow[]> {
     const rows = await this.col('data_source')
@@ -881,7 +879,7 @@ export class MongoStore implements DataStore {
   async deleteDataSource(id: number): Promise<boolean> {
     const res = await this.col('data_source').deleteOne({ _id: id })
     if (res.deletedCount === 0) return false
-    // Rien ne cascade en Mongo : on retire les abonnements qui visaient cette base.
+    // Nothing cascades in Mongo: we remove the subscriptions that targeted this database.
     await this.col('external_subscription').deleteMany({ data_source_id: id })
     return true
   }
@@ -995,8 +993,8 @@ export class MongoStore implements DataStore {
       const taken = await this.col('user').findOne({
         $and: [sameEmail(patch.email), { _id: { $ne: userId } }],
       })
-      // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
-      // dire « e-mail déjà pris » : les routes s'y réfèrent pour répondre 409.
+      // Code 23505 comes from Postgres, but it has become the agreed way to
+      // say "e-mail already taken": routes rely on it to answer 409.
       if (taken)
         throw Object.assign(new Error('email already in use'), {
           code: '23505',
@@ -1029,7 +1027,7 @@ export class MongoStore implements DataStore {
   async deleteUser(userId: string): Promise<boolean> {
     const res = await this.col('user').deleteOne({ _id: userId })
     if (res.deletedCount === 0) return false
-    // Rien ne cascade en Mongo : ce que ON DELETE CASCADE effaçait, on l'efface.
+    // Nothing cascades in Mongo: what ON DELETE CASCADE erased, we erase.
     await Promise.all([
       this.col('account').deleteMany({ user_id: userId }),
       this.col('session').deleteMany({ user_id: userId }),
@@ -1093,7 +1091,7 @@ export class MongoStore implements DataStore {
       : null
   }
 
-  // ── Administrateurs ───────────────────────────────────────────────────────
+  // ── Administrators ────────────────────────────────────────────────────────
 
   async findAdminByEmail(email: string) {
     const row = await this.col('admin').findOne(sameEmail(email))
@@ -1176,7 +1174,7 @@ export class MongoStore implements DataStore {
     return this.col('admin').countDocuments({ is_super: true })
   }
 
-  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+  // ── Flux requests (approval queue) ───────────────────────────────────────
 
   async findPendingFluxRequest(userId: string, provider: string, url: string) {
     const row = await this.col('flux_request').findOne({

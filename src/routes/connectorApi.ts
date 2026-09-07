@@ -5,21 +5,21 @@ import { connectorAuth, requireOwnProvider } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
 /**
- * Ce que les connectors appellent — plus jamais la base directement (voir
- * `docs/self-hosting-and-providers.md` Part 2). Authentifié par une clé
- * d'API (`connectorAuth`), scopée à un seul provider (`requireOwnProvider`) :
- * une clé `rss` ne peut agir que sous `/connector-api/rss/*`.
+ * What connectors call — never the database directly anymore (see
+ * `docs/self-hosting-and-providers.md` Part 2). Authenticated by an API key
+ * (`connectorAuth`), scoped to a single provider (`requireOwnProvider`): an
+ * `rss` key can only act under `/connector-api/rss/*`.
  *
- * Distinct de `/connectors`, qui reste réservé aux 3 apps (JWT utilisateur,
- * lecture seule) — mélanger les deux mécanismes d'auth sous un même préfixe
- * serait une source d'erreurs.
+ * Distinct from `/connectors`, which stays reserved for the 3 apps (user JWT,
+ * read-only) — mixing the two auth mechanisms under one prefix would be a source
+ * of mistakes.
  */
 export const connectorApiRoute = new Hono<{ Bindings: Bindings }>()
 
 connectorApiRoute.use('/:provider/*', connectorAuth, requireOwnProvider)
 
-// POST /:provider/register — auto-déclaration au démarrage (nom affiché,
-// gabarit d'affichage). Idempotent : à rappeler à chaque run sans risque.
+// POST /:provider/register — self-declaration at startup (display name, display
+// template). Idempotent: safe to call on every run.
 connectorApiRoute.post('/:provider/register', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json<{
@@ -42,8 +42,8 @@ connectorApiRoute.post('/:provider/register', async (c) => {
   return c.json({ success: true })
 })
 
-// POST /:provider/sources — suit une nouvelle URL (équivalent du `--add` en
-// ligne de commande d'un connector). Idempotent sur l'URL, comme avant.
+// POST /:provider/sources — follows a new URL (equivalent of a connector's
+// `--add` command-line flag). Idempotent on the URL, as before.
 connectorApiRoute.post('/:provider/sources', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json<{ url?: string }>()
@@ -63,8 +63,8 @@ connectorApiRoute.post('/:provider/sources', async (c) => {
   return c.json({ id: source.id, url: source.url }, existing ? 200 : 201)
 })
 
-// GET /:provider/sources — mes sources suivies (repository + config), pour
-// savoir quoi collecter à ce run.
+// GET /:provider/sources — my tracked sources (repository + config), to know
+// what to collect this run.
 connectorApiRoute.get('/:provider/sources', async (c) => {
   const provider = c.req.param('provider')
   const store = await getStore(c.env.DATABASE_URL)
@@ -74,8 +74,8 @@ connectorApiRoute.get('/:provider/sources', async (c) => {
   })
 })
 
-// GET /:provider/sources/:id/state — dernière version connue pour cette
-// source, pour savoir où reprendre (null au premier run).
+// GET /:provider/sources/:id/state — last known version for this source, to
+// know where to resume (null on the first run).
 connectorApiRoute.get('/:provider/sources/:id/state', async (c) => {
   const provider = c.req.param('provider')
   const id = Number.parseInt(c.req.param('id'), 10)
@@ -86,10 +86,10 @@ connectorApiRoute.get('/:provider/sources/:id/state', async (c) => {
   return c.json({ version })
 })
 
-// GET /:provider/sources/:id/versions — toutes les versions déjà connues pour
-// cette source (pas juste la dernière) — pour un connector qui doit combler
-// des trous plutôt que juste reprendre après la plus récente (ex. `changelog`,
-// dont les releases GitHub peuvent apparaître dans le désordre).
+// GET /:provider/sources/:id/versions — every version already known for this
+// source (not just the latest) — for a connector that must fill gaps rather
+// than just resume after the most recent one (e.g. `changelog`, whose GitHub
+// releases can show up out of order).
 connectorApiRoute.get('/:provider/sources/:id/versions', async (c) => {
   const provider = c.req.param('provider')
   const id = Number.parseInt(c.req.param('id'), 10)
@@ -100,9 +100,9 @@ connectorApiRoute.get('/:provider/sources/:id/versions', async (c) => {
   return c.json({ versions })
 })
 
-// PATCH /:provider/sources/:id/config — fusionne des clés dans la config
-// d'une source (ex. `rss` y range le titre du canal pour l'affichage).
-// Fusion, jamais un remplacement : ne touche pas aux clés absentes du corps.
+// PATCH /:provider/sources/:id/config — merges keys into a source's config
+// (e.g. `rss` stores the channel title there for display). A merge, never a
+// replace: leaves keys absent from the body untouched.
 connectorApiRoute.patch('/:provider/sources/:id/config', async (c) => {
   const provider = c.req.param('provider')
   const id = Number.parseInt(c.req.param('id'), 10)
@@ -144,8 +144,8 @@ function isValidItem(item: unknown): item is ItemPayload {
   )
 }
 
-// POST /:provider/items — écriture en lot (pas un POST par item, pour éviter
-// un aller-retour HTTP par ligne collectée).
+// POST /:provider/items — batch write (not one POST per item, to avoid an HTTP
+// round-trip per collected row).
 connectorApiRoute.post('/:provider/items', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json<{ items?: unknown[] }>()
@@ -170,9 +170,9 @@ connectorApiRoute.post('/:provider/items', async (c) => {
   return c.json({ success: true, count: items.length }, 201)
 })
 
-// DELETE /:provider/sources/:id/old-items?retentionDays=N — purge ce que
-// chaque connector faisait lui-même après chaque run. Filtrée par `provider`
-// dans la requête elle-même : un id d'une autre provider ne supprime rien.
+// DELETE /:provider/sources/:id/old-items?retentionDays=N — purges what each
+// connector used to do itself after every run. Filtered by `provider` in the
+// query itself: an id from another provider deletes nothing.
 connectorApiRoute.delete('/:provider/sources/:id/old-items', async (c) => {
   const provider = c.req.param('provider')
   const id = Number.parseInt(c.req.param('id'), 10)
@@ -190,7 +190,7 @@ connectorApiRoute.delete('/:provider/sources/:id/old-items', async (c) => {
   return c.json({ success: true })
 })
 
-// POST /:provider/errors — une erreur de collecte, consignée dans `log`.
+// POST /:provider/errors — a collection error, recorded in `log`.
 connectorApiRoute.post('/:provider/errors', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json<{

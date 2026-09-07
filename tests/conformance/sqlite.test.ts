@@ -12,7 +12,7 @@ const SCHEMA = readFileSync(
   'utf-8',
 )
 
-/** Adapte better-sqlite3 au peu que SqliteStore attend d'un client. */
+/** Adapts better-sqlite3 to the little SqliteStore expects from a client. */
 function client(db: Database.Database): SqliteClient {
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])),
@@ -29,11 +29,11 @@ runDataStoreConformance('SQLite', {
     return new SqliteStore(client(db))
   },
 
-  // Le contenu vit dans la table unique `connector_item`, et « avoir un
-  // espace de stockage » correspond désormais à l'appel que fait un connector
-  // au tout début de son cycle de vie (`registerProvider`, avant même sa
-  // première tentative de collecte) : c'est le contrat `DataStore` lui-même
-  // qui sait atteindre l'un et l'autre pour ce moteur.
+  // Content lives in the single `connector_item` table, and "having a
+  // storage space" now corresponds to the call a connector makes at the very
+  // start of its lifecycle (`registerProvider`, before its first collection
+  // attempt even): it is the `DataStore` contract itself
+  // that knows how to reach both for this engine.
   async seedProvider(store, provider, rows) {
     await store.registerProvider({ name: provider, displayName: provider })
     await store.insertContentItems(

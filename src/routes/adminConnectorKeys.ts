@@ -8,17 +8,17 @@ import { getStore } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
-// Gestion admin des clés d'API de connectors — distinct de `/connector-api`,
-// que les clés elles-mêmes appellent. Auth JWT admin classique ici.
+// Admin management of connector API keys — distinct from `/connector-api`,
+// which the keys themselves call. Plain admin JWT auth here.
 export const adminConnectorKeysRoute = new Hono<{ Bindings: Bindings }>()
 
 adminConnectorKeysRoute.use('*', authMiddleware)
 adminConnectorKeysRoute.use('*', requireAdmin)
 
-// POST / — { provider, name }. `provider` est du texte libre, pas restreint
-// aux providers déjà enregistrés : c'est la toute première clé d'un provider
-// qui n'a jamais tourné qui lui permettra de s'enregistrer. La clé en clair
-// n'est renvoyée qu'ici, une seule fois — ensuite seul son hash est gardé.
+// POST / — { provider, name }. `provider` is free text, not restricted to
+// already-registered providers: it is the very first key of a provider that has
+// never run that lets it register itself. The plaintext key is returned only
+// here, once — afterwards only its hash is kept.
 adminConnectorKeysRoute.post('/', async (c) => {
   const body = await c.req.json<{ provider?: string; name?: string }>()
 
@@ -41,15 +41,15 @@ adminConnectorKeysRoute.post('/', async (c) => {
   )
 })
 
-// GET / — liste des clés, sans jamais le secret (seul `key_prefix` identifie
-// une clé dans l'interface).
+// GET / — list of keys, never the secret (only `key_prefix` identifies a key
+// in the UI).
 adminConnectorKeysRoute.get('/', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const keys = await store.listConnectorKeys()
   return c.json({ keys })
 })
 
-// DELETE /:id — révocation. 404 si la clé n'existe pas ou est déjà révoquée.
+// DELETE /:id — revocation. 404 if the key does not exist or is already revoked.
 adminConnectorKeysRoute.delete('/:id', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const revoked = await store.revokeConnectorKey(c.req.param('id'))

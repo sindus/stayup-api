@@ -4,13 +4,13 @@ import { getStore } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
-// Réglages par provider, côté admin. Aujourd'hui : le mode d'ajout de flux.
+// Per-provider settings, admin side. Today: the flux-adding mode.
 export const adminProvidersRoute = new Hono<{ Bindings: Bindings }>()
 
 adminProvidersRoute.use('*', authMiddleware)
 adminProvidersRoute.use('*', requireAdmin)
 
-// GET /ui/providers — providers découverts + leur mode d'approbation.
+// GET /ui/providers — discovered providers + their approval mode.
 adminProvidersRoute.get('/', async (c) => {
   const providers = await listProviders(await getStore(c.env.DATABASE_URL))
   return c.json({

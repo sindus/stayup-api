@@ -13,7 +13,7 @@ export const adminsRoute = new Hono<{ Bindings: Bindings }>()
 
 adminsRoute.use('*', authMiddleware)
 
-// ─── Self-service : un admin change son propre mot de passe ──────────────────
+// ─── Self-service: an admin changes their own password ──────────────────────
 
 // PATCH /ui/admins/me — { currentPassword, password }
 adminsRoute.patch('/me', requireAdmin, async (c) => {
@@ -47,7 +47,7 @@ adminsRoute.patch('/me', requireAdmin, async (c) => {
   return c.json({ success: true })
 })
 
-// ─── Super admin uniquement : gestion des autres admins ─────────────────────
+// ─── Super admin only: managing other admins ────────────────────────────────
 
 adminsRoute.use('*', requireSuperAdmin)
 
@@ -57,8 +57,8 @@ adminsRoute.get('/', async (c) => {
   return c.json({ admins })
 })
 
-// POST /ui/admins — { email, name, password }. Crée un admin « normal » : les
-// super admins ne se créent qu'en ligne de commande.
+// POST /ui/admins — { email, name, password }. Creates a "normal" admin: super
+// admins are only created from the command line.
 adminsRoute.post('/', async (c) => {
   const body = await c.req.json<{
     email?: string
@@ -129,8 +129,8 @@ adminsRoute.delete('/:id', async (c) => {
   const target = await store.getAdmin(id)
   if (!target) return c.json({ error: 'Admin not found' }, 404)
 
-  // Un super admin ne se supprime pas depuis l'interface (seulement en base) ;
-  // et on ne se supprime pas soi-même.
+  // A super admin cannot be deleted from the UI (only in the database); and you
+  // cannot delete yourself.
   if (target.is_super) {
     return c.json({ error: 'Super admins cannot be removed from the UI' }, 403)
   }

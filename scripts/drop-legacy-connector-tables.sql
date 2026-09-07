@@ -1,10 +1,10 @@
--- Suppression des anciennes tables connector_<provider>, remplacées par la
--- table unique `connector_item` (colonne `provider` discriminante).
--- Script NON exécuté automatiquement — à lancer manuellement, une fois tous
--- les connectors basculés sur /connector-api et validés en prod :
+-- Drops the old connector_<provider> tables, replaced by the single
+-- `connector_item` table (discriminating `provider` column).
+-- Script NOT run automatically — run it manually, once every connector has
+-- switched to /connector-api and is validated in prod:
 --   psql "$DATABASE_URL" -f scripts/drop-legacy-connector-tables.sql
 --
--- Aucune contrainte de clé étrangère entre elles : ordre indifférent.
+-- No foreign-key constraint between them: order does not matter.
 
 DROP TABLE IF EXISTS connector_changelog;
 DROP TABLE IF EXISTS connector_github_trending;

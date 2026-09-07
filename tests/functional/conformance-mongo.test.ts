@@ -10,7 +10,7 @@ const URL =
 
 const client = new MongoClient(URL)
 
-/** Une base par cas de test : la suite exige une base vraiment neuve. */
+/** One database per test case: the suite requires a truly fresh database. */
 let counter = 0
 const created: string[] = []
 
@@ -29,9 +29,10 @@ runDataStoreConformance('MongoDB', {
     return new MongoStore(db)
   },
 
-  // Le contenu vit dans la collection unique `connector_item` : c'est le
-  // contrat `DataStore` lui-même (registerProvider/insertContentItems) qui
-  // sait l'atteindre pour ce moteur — le test n'a plus besoin de le savoir aussi.
+  // Content lives in the single `connector_item` collection: it is the
+  // `DataStore` contract itself (registerProvider/insertContentItems) that
+  // knows how to reach it for this engine — the test no longer needs to know
+  // it either.
   async seedProvider(store, provider, rows) {
     await store.registerProvider({ name: provider, displayName: provider })
     await store.insertContentItems(

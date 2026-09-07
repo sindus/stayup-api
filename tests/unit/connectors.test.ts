@@ -24,7 +24,7 @@ describe('GET /connectors/providers', () => {
       .mockResolvedValueOnce([]) // listProviderNames: namesWithContent
       .mockResolvedValueOnce([
         { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
-      ]) // readRegistry (pas de ligne pour 'changelog' → fallback)
+      ]) // readRegistry (no row for 'changelog' → fallback)
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(
@@ -41,7 +41,7 @@ describe('GET /connectors/providers', () => {
   })
 
   it('returns an empty list when provider_registry does not exist yet', async () => {
-    // Base neuve : aucun connector ne s'est encore jamais enregistré.
+    // Fresh database: no connector has ever registered yet.
     const sql = createSqlMock()
     sql.mockRejectedValueOnce(
       new Error('relation "provider_registry" does not exist'),
@@ -89,7 +89,7 @@ describe('GET /connectors/providers', () => {
           sort_order: 50,
           template,
         },
-        // youtube : pas de template déclaré → clé absente de la réponse
+        // youtube: no declared template → key absent from the response
         { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
       ]) // readRegistry
     vi.mocked(getSql).mockReturnValue(sql as never)
@@ -112,10 +112,10 @@ describe('GET /connectors/providers', () => {
   })
 
   it('keeps template + flux_approval when the retention_days column is missing', async () => {
-    // Régression : un registre créé avant la feature de rétention n'a pas encore
-    // la colonne `retention_days`. Le SELECT complet part en `42703` ; on doit
-    // relire SANS cette colonne — pas retomber sur un registre nu, sinon les
-    // apps perdent icônes et mise en forme.
+    // Regression: a registry created before the retention feature does not have
+    // the `retention_days` column yet. The full SELECT throws `42703`; we must
+    // re-read WITHOUT that column — not fall back to a bare registry, otherwise
+    // the apps lose icons and formatting.
     const template = {
       version: 1,
       display: { name: 'RSS' },
@@ -140,7 +140,7 @@ describe('GET /connectors/providers', () => {
           template,
           flux_approval: 'manual',
         },
-      ]) // readRegistry — SELECT sans retention_days
+      ]) // readRegistry — SELECT without retention_days
     vi.mocked(getSql).mockReturnValue(sql as never)
 
     const res = await app.request(

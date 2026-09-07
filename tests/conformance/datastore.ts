@@ -1,18 +1,18 @@
 /**
- * Suite de conformité du contrat `DataStore`.
+ * `DataStore` contract conformance suite.
  *
- * Tout adaptateur doit la passer. C'est elle qui donne un sens à « l'API sait
- * s'adapter au type de base » : sans elle, deux adaptateurs peuvent compiler et
- * se comporter différemment, et c'est l'utilisateur qui découvre l'écart.
+ * Every adapter must pass it. This is what gives meaning to "the API adapts to
+ * the database type": without it, two adapters can compile and behave
+ * differently, and it is the user who discovers the gap.
  *
- * Volontairement écrite en termes de comportement observable — jamais de requête,
- * jamais de nom de table — pour qu'un adaptateur NoSQL puisse la passer aussi.
+ * Deliberately written in terms of observable behavior — never a query, never a
+ * table name — so a NoSQL adapter can pass it too.
  */
 
 import { describe, expect, it } from 'vitest'
 import type { DataStore } from '../../src/db/port.js'
 
-/** Crée un utilisateur de test, en échouant franchement si l'e-mail est pris. */
+/** Creates a test user, failing loudly if the e-mail is taken. */
 async function newUser(store: DataStore, email = 'ada@example.com') {
   const created = await store.createCredentialUser({
     name: 'Ada',
@@ -20,14 +20,14 @@ async function newUser(store: DataStore, email = 'ada@example.com') {
     passwordHash: 'x',
   })
   if (!created)
-    throw new Error(`e-mail "${email}" déjà pris dans une base neuve`)
+    throw new Error(`e-mail "${email}" already taken in a fresh database`)
   return created
 }
 
 export interface ConformanceHarness {
-  /** Une base neuve, vide, avec le schéma en place. */
+  /** A fresh, empty database with the schema in place. */
   freshStore(): Promise<DataStore>
-  /** Crée l'espace de stockage d'un provider et y met des lignes de contenu. */
+  /** Creates a provider's storage space and puts content rows in it. */
   seedProvider(
     store: DataStore,
     provider: string,
@@ -38,8 +38,8 @@ export interface ConformanceHarness {
       datetime?: string | null
     }[],
   ): Promise<void>
-  /** Déclare un nom affiché (et, si fourni, un manifeste d'affichage), comme le
-   *  ferait un collecteur au démarrage. */
+  /** Declares a display name (and, if provided, a display manifest), the way a
+   *  collector would at startup. */
   seedRegistry(
     store: DataStore,
     entries: {
@@ -55,16 +55,16 @@ export function runDataStoreConformance(
   label: string,
   harness: ConformanceHarness,
 ): void {
-  describe(`contrat DataStore — ${label}`, () => {
-    // ── Découverte ─────────────────────────────────────────────────────────
+  describe(`DataStore contract — ${label}`, () => {
+    // ── Discovery ──────────────────────────────────────────────────────────
 
-    it('ne voit aucun provider sur une base neuve', async () => {
+    it('sees no provider on a fresh database', async () => {
       const store = await harness.freshStore()
       expect(await store.listProviderNames()).toEqual([])
       expect(await store.providerExists('podcast')).toBe(false)
     })
 
-    it('découvre un provider dès qu’il a un espace de stockage', async () => {
+    it('discovers a provider as soon as it has a storage space', async () => {
       const store = await harness.freshStore()
       await harness.seedProvider(store, 'podcast', [])
 
@@ -72,12 +72,12 @@ export function runDataStoreConformance(
       expect(await store.providerExists('podcast')).toBe(true)
     })
 
-    it('ne renvoie rien pour un provider jamais enregistré', async () => {
+    it('returns nothing for a provider that was never registered', async () => {
       const store = await harness.freshStore()
       expect(await store.readRegistry(['podcast'])).toEqual([])
     })
 
-    it('rend les noms affichés déclarés', async () => {
+    it('returns the declared display names', async () => {
       const store = await harness.freshStore()
       await harness.seedRegistry(store, [
         { name: 'podcast', display_name: 'Podcasts', sort_order: 10 },
@@ -93,7 +93,7 @@ export function runDataStoreConformance(
       ])
     })
 
-    it("relaie tel quel le manifeste d'affichage déclaré par le provider", async () => {
+    it('relays the display manifest declared by the provider as-is', async () => {
       const store = await harness.freshStore()
       const template = {
         version: 1,
@@ -115,7 +115,7 @@ export function runDataStoreConformance(
       ])
     })
 
-    it('omet la clé template quand le provider n’en déclare pas', async () => {
+    it('omits the template key when the provider declares none', async () => {
       const store = await harness.freshStore()
       await harness.seedRegistry(store, [
         { name: 'podcast', display_name: 'Podcasts', sort_order: 10 },
@@ -125,9 +125,9 @@ export function runDataStoreConformance(
       expect(entry).not.toHaveProperty('template')
     })
 
-    // ── Contenu ────────────────────────────────────────────────────────────
+    // ── Content ────────────────────────────────────────────────────────────
 
-    it('ne garde que la ligne la plus récente par source', async () => {
+    it('keeps only the most recent row per source', async () => {
       const store = await harness.freshStore()
       const source = await store.createSource({
         url: 'https://example.com/a',
@@ -137,49 +137,49 @@ export function runDataStoreConformance(
       await harness.seedProvider(store, 'podcast', [
         {
           repository_id: source.id,
-          content: 'ancien',
+          content: 'old',
           executed_at: '2026-01-01T00:00:00Z',
         },
         {
           repository_id: source.id,
-          content: 'récent',
+          content: 'recent',
           executed_at: '2026-06-01T00:00:00Z',
         },
       ])
 
       const latest = await store.latestPerSource('podcast')
       expect(latest).toHaveLength(1)
-      expect(latest[0].content).toBe('récent')
+      expect(latest[0].content).toBe('recent')
     })
 
-    it('préfère la date du contenu à celle de la collecte', async () => {
+    it('prefers the content date over the collection date', async () => {
       const store = await harness.freshStore()
       const source = await store.createSource({
         url: 'https://example.com/b',
         type: 'podcast',
         config: {},
       })
-      // Collecté plus tard, mais publié avant : c'est la date du contenu qui tranche.
+      // Collected later, but published earlier: the content date decides.
       await harness.seedProvider(store, 'podcast', [
         {
           repository_id: source.id,
-          content: 'publié en juin',
+          content: 'published in June',
           executed_at: '2026-01-01T00:00:00Z',
           datetime: '2026-06-01T00:00:00Z',
         },
         {
           repository_id: source.id,
-          content: 'publié en janvier',
+          content: 'published in January',
           executed_at: '2026-07-01T00:00:00Z',
           datetime: '2026-01-01T00:00:00Z',
         },
       ])
 
       const latest = await store.latestPerSource('podcast')
-      expect(latest[0].content).toBe('publié en juin')
+      expect(latest[0].content).toBe('published in June')
     })
 
-    it('limite le contenu aux sources demandées', async () => {
+    it('limits content to the requested sources', async () => {
       const store = await harness.freshStore()
       const a = await store.createSource({
         url: 'https://a.dev',
@@ -194,22 +194,22 @@ export function runDataStoreConformance(
       await harness.seedProvider(store, 'podcast', [
         {
           repository_id: a.id,
-          content: 'de a',
+          content: 'from a',
           executed_at: '2026-01-01T00:00:00Z',
         },
         {
           repository_id: b.id,
-          content: 'de b',
+          content: 'from b',
           executed_at: '2026-01-01T00:00:00Z',
         },
       ])
 
       const rows = await store.latestForSources('podcast', [a.id], 10)
-      expect(rows.map((r) => r.content)).toEqual(['de a'])
+      expect(rows.map((r) => r.content)).toEqual(['from a'])
       expect(await store.latestForSources('podcast', [], 10)).toEqual([])
     })
 
-    it('respecte la limite par source', async () => {
+    it('respects the per-source limit', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://c.dev',
@@ -229,7 +229,7 @@ export function runDataStoreConformance(
       expect(await store.latestForSources('podcast', [s.id], 2)).toHaveLength(2)
     })
 
-    it('supprime le contenu d’une source sans toucher aux autres', async () => {
+    it("deletes a source's content without touching the others", async () => {
       const store = await harness.freshStore()
       const a = await store.createSource({
         url: 'https://d.dev',
@@ -244,12 +244,12 @@ export function runDataStoreConformance(
       await harness.seedProvider(store, 'podcast', [
         {
           repository_id: a.id,
-          content: 'de a',
+          content: 'from a',
           executed_at: '2026-01-01T00:00:00Z',
         },
         {
           repository_id: b.id,
-          content: 'de b',
+          content: 'from b',
           executed_at: '2026-01-01T00:00:00Z',
         },
       ])
@@ -257,19 +257,19 @@ export function runDataStoreConformance(
       await store.deleteContentForSource('podcast', a.id)
 
       const rest = await store.allContent('podcast')
-      expect(rest.map((r) => r.content)).toEqual(['de b'])
+      expect(rest.map((r) => r.content)).toEqual(['from b'])
     })
 
-    it('ignore la suppression pour un provider inconnu', async () => {
+    it('ignores deletion for an unknown provider', async () => {
       const store = await harness.freshStore()
       await expect(
-        store.deleteContentForSource('inexistant', 1),
+        store.deleteContentForSource('nonexistent', 1),
       ).resolves.toBeUndefined()
     })
 
-    // ── Contenu collecté (écriture, réservée aux connectors) ────────────────
+    // ── Collected content (writes, reserved for connectors) ─────────────────
 
-    it('écrit un lot de lignes en une fois', async () => {
+    it('writes a batch of rows in one go', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://batch.dev',
@@ -281,14 +281,14 @@ export function runDataStoreConformance(
         {
           repositoryId: s.id,
           version: 'v1',
-          content: 'un',
+          content: 'one',
           executedAt: '2026-01-01T00:00:00Z',
           success: true,
         },
         {
           repositoryId: s.id,
           version: 'v2',
-          content: 'deux',
+          content: 'two',
           params: { retries: 1 },
           executedAt: '2026-01-02T00:00:00Z',
           success: true,
@@ -296,15 +296,15 @@ export function runDataStoreConformance(
       ])
 
       const rows = await store.allContent('podcast')
-      expect(rows.map((r) => r.content)).toEqual(['un', 'deux'])
-      // Un lot vide ne doit rien écrire ni échouer.
+      expect(rows.map((r) => r.content)).toEqual(['one', 'two'])
+      // An empty batch must write nothing and not fail.
       await expect(
         store.insertContentItems('podcast', []),
       ).resolves.toBeUndefined()
       expect(await store.allContent('podcast')).toHaveLength(2)
     })
 
-    it('retrouve la dernière version réussie, ignore les échecs', async () => {
+    it('finds the last successful version, ignoring failures', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://version.dev',
@@ -318,7 +318,7 @@ export function runDataStoreConformance(
         {
           repositoryId: s.id,
           version: 'v1',
-          content: 'un',
+          content: 'one',
           executedAt: '2026-01-01T00:00:00Z',
           success: true,
         },
@@ -332,17 +332,17 @@ export function runDataStoreConformance(
         {
           repositoryId: s.id,
           version: 'v1.1',
-          content: 'plus récent',
+          content: 'more recent',
           executedAt: '2026-01-02T00:00:00Z',
           success: true,
         },
       ])
 
-      // La plus récente RÉUSSIE, pas la plus récente tout court.
+      // The most recent SUCCESSFUL one, not just the most recent.
       expect(await store.getLastKnownVersion('podcast', s.id)).toBe('v1.1')
     })
 
-    it('liste toutes les versions connues, pas seulement la dernière', async () => {
+    it('lists every known version, not just the last one', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://versions.dev',
@@ -356,21 +356,21 @@ export function runDataStoreConformance(
         {
           repositoryId: s.id,
           version: 'v1',
-          content: 'un',
+          content: 'one',
           executedAt: '2026-01-01T00:00:00Z',
           success: true,
         },
         {
           repositoryId: s.id,
           version: null,
-          content: 'sans version',
+          content: 'no version',
           executedAt: '2026-01-02T00:00:00Z',
           success: true,
         },
         {
           repositoryId: s.id,
           version: 'v2',
-          content: 'deux',
+          content: 'two',
           executedAt: '2026-01-03T00:00:00Z',
           success: true,
         },
@@ -380,7 +380,7 @@ export function runDataStoreConformance(
       expect(new Set(versions)).toEqual(new Set(['v1', 'v2']))
     })
 
-    it('liste les sources suivies par un provider, sans état d’abonnement', async () => {
+    it("lists a provider's tracked sources, with no subscription state", async () => {
       const store = await harness.freshStore()
       await store.createSource({
         url: 'https://own.dev/a',
@@ -402,7 +402,7 @@ export function runDataStoreConformance(
       })
     })
 
-    it('fusionne une config partielle sans écraser les clés absentes', async () => {
+    it('merges a partial config without overwriting absent keys', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://merge.dev',
@@ -410,34 +410,34 @@ export function runDataStoreConformance(
         config: { max_entries: 5, retention_days: 15 },
       })
 
-      await store.mergeSourceConfig(s.id, { title: 'Mon flux' })
+      await store.mergeSourceConfig(s.id, { title: 'My flux' })
 
       const after = await store.getSource(s.id)
       expect(after?.config).toEqual({
         max_entries: 5,
         retention_days: 15,
-        title: 'Mon flux',
+        title: 'My flux',
       })
 
-      // Une deuxième fusion ne touche que la clé qu'elle porte.
-      await store.mergeSourceConfig(s.id, { title: 'Mon flux renommé' })
+      // A second merge only touches the key it carries.
+      await store.mergeSourceConfig(s.id, { title: 'My renamed flux' })
       expect((await store.getSource(s.id))?.config).toEqual({
         max_entries: 5,
         retention_days: 15,
-        title: 'Mon flux renommé',
+        title: 'My renamed flux',
       })
     })
 
-    it('consigne une erreur de collecte sans échouer', async () => {
+    it('records a collection error without failing', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://err.dev',
         type: 'podcast',
         config: {},
       })
-      // Rien dans le contrat n'expose `log` en lecture : c'est une donnée
-      // opérationnelle, pas un objet du contrat. On vérifie juste qu'écrire
-      // (avec ou sans source connue) ne casse rien.
+      // Nothing in the contract exposes `log` for reading: it is operational
+      // data, not a contract object. We only check that writing (with or
+      // without a known source) breaks nothing.
       await expect(
         store.logConnectorError(
           'podcast',
@@ -450,13 +450,13 @@ export function runDataStoreConformance(
         store.logConnectorError(
           'podcast',
           null,
-          'boom global',
+          'global boom',
           '2026-01-01T00:00:00Z',
         ),
       ).resolves.toBeUndefined()
     })
 
-    it('supprime les lignes plus vieilles que la rétention, garde les autres', async () => {
+    it('deletes rows older than the retention, keeps the others', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://retention.dev',
@@ -470,13 +470,13 @@ export function runDataStoreConformance(
       await store.insertContentItems('podcast', [
         {
           repositoryId: s.id,
-          content: 'vieux',
+          content: 'old',
           executedAt: daysAgo(20),
           success: true,
         },
         {
           repositoryId: s.id,
-          content: 'récent',
+          content: 'recent',
           executedAt: daysAgo(1),
           success: true,
         },
@@ -485,10 +485,10 @@ export function runDataStoreConformance(
       await store.deleteOldContent('podcast', s.id, 15)
 
       const rest = await store.allContent('podcast')
-      expect(rest.map((r) => r.content)).toEqual(['récent'])
+      expect(rest.map((r) => r.content)).toEqual(['recent'])
     })
 
-    it('purge centralisée : défaut global, surcharge par provider, et « off »', async () => {
+    it('centralized purge: global default, per-provider override, and "off"', async () => {
       const store = await harness.freshStore()
       const now = Date.now()
       const daysAgo = (n: number) =>
@@ -503,13 +503,13 @@ export function runDataStoreConformance(
         await store.insertContentItems(type, [
           {
             repositoryId: s.id,
-            content: 'vieux',
+            content: 'old',
             executedAt: daysAgo(20),
             success: true,
           },
           {
             repositoryId: s.id,
-            content: 'récent',
+            content: 'recent',
             executedAt: daysAgo(1),
             success: true,
           },
@@ -519,47 +519,47 @@ export function runDataStoreConformance(
       await mk('podcast')
       await mk('reddit')
       await mk('hackernews')
-      // podcast et reddit ont besoin d'une ligne de registre pour porter une surcharge.
+      // podcast and reddit need a registry row to carry an override.
       await store.registerProvider({ name: 'reddit', displayName: 'Reddit' })
       await store.registerProvider({ name: 'hackernews', displayName: 'HN' })
 
-      // défaut intégré (30 j) tant que rien n'est posé
+      // built-in default (30 d) as long as nothing is set
       expect(await store.getContentRetentionDefault()).toBe(30)
       await store.setContentRetentionDefault(15)
       expect(await store.getContentRetentionDefault()).toBe(15)
 
-      // reddit garde 90 j (rien ne tombe), hackernews suit le défaut (15 j).
+      // reddit keeps 90 d (nothing falls), hackernews follows the default (15 d).
       await store.setProviderRetention('reddit', 90)
 
       const report = await store.purgeExpiredContent()
       const byProvider = Object.fromEntries(
         report.map((r) => [r.provider, r.deleted]),
       )
-      // podcast : pas de ligne de registre → suit le défaut, la vieille tombe
+      // podcast: no registry row → follows the default, the old one falls
       expect(byProvider.podcast).toBe(1)
-      // hackernews : suit le défaut, la vieille tombe
+      // hackernews: follows the default, the old one falls
       expect(byProvider.hackernews).toBe(1)
-      // reddit : surcharge 90 j, rien ne tombe (donc pas listé ou 0)
+      // reddit: 90 d override, nothing falls (so not listed, or 0)
       expect(byProvider.reddit ?? 0).toBe(0)
 
       expect((await store.allContent('podcast')).map((r) => r.content)).toEqual(
-        ['récent'],
+        ['recent'],
       )
       expect(
         (await store.allContent('reddit')).map((r) => r.content).sort(),
-      ).toEqual(['récent', 'vieux'])
+      ).toEqual(['old', 'recent'])
 
-      // « off » désactive toute purge automatique.
+      // "off" disables any automatic purge.
       await store.setContentRetentionDefault(null)
       expect(await store.getContentRetentionDefault()).toBe(null)
       await store.setProviderRetention('reddit', null)
-      // Remet du vieux contenu et vérifie que la passe suivante ne touche rien.
+      // Put some old content back and check the next pass touches nothing.
       const hn = await store.findSourceByUrl('https://hackernews.dev')
-      if (!hn) throw new Error('source hackernews introuvable')
+      if (!hn) throw new Error('hackernews source not found')
       await store.insertContentItems('hackernews', [
         {
           repositoryId: hn.id,
-          content: 'très vieux',
+          content: 'very old',
           executedAt: daysAgo(40),
           success: true,
         },
@@ -568,7 +568,7 @@ export function runDataStoreConformance(
       expect(report2).toEqual([])
     })
 
-    it('enregistre un provider, idempotent, sans réécrire sortOrder', async () => {
+    it('registers a provider, idempotent, without rewriting sortOrder', async () => {
       const store = await harness.freshStore()
       expect(await store.providerExists('podcast')).toBe(false)
 
@@ -580,8 +580,8 @@ export function runDataStoreConformance(
       expect(await store.providerExists('podcast')).toBe(true)
       expect(await store.listProviderNames()).toEqual(['podcast'])
 
-      // Un second appel (redémarrage du connector) met à jour le nom affiché
-      // et le template, mais jamais sortOrder — un admin a pu le retoucher.
+      // A second call (connector restart) updates the display name and the
+      // template, but never sortOrder — an admin may have tweaked it.
       const template = { version: 1 }
       await store.registerProvider({
         name: 'podcast',
@@ -599,10 +599,10 @@ export function runDataStoreConformance(
       })
     })
 
-    it('ne touche pas au template existant quand un appel ne le fournit pas', async () => {
-      // Incident vécu : un appel `register` sans `template` (un simple test
-      // d'auth, par ex.) avait effacé le manifeste d'affichage d'un provider
-      // en prod. `template` absent de l'appel ≠ `template` explicitement nul.
+    it('leaves the existing template alone when a call does not provide it', async () => {
+      // Real-world incident: a `register` call without `template` (a simple
+      // auth test, say) had wiped a provider's display manifest in prod.
+      // `template` absent from the call ≠ `template` explicitly null.
       const store = await harness.freshStore()
       const template = { version: 1, list: { layout: 'row' } }
       await store.registerProvider({
@@ -613,19 +613,19 @@ export function runDataStoreConformance(
 
       await store.registerProvider({
         name: 'podcast',
-        displayName: 'Podcasts renommé',
+        displayName: 'Renamed podcasts',
       })
 
       const [entry] = await store.readRegistry(['podcast'])
       expect(entry).toMatchObject({
-        display_name: 'Podcasts renommé',
+        display_name: 'Renamed podcasts',
         template,
       })
     })
 
-    // ── Clés d'API des connectors ────────────────────────────────────────────
+    // ── Connector API keys ─────────────────────────────────────────────────
 
-    it('suit le cycle de vie d’une clé d’API de connector', async () => {
+    it("follows a connector API key's lifecycle", async () => {
       const store = await harness.freshStore()
 
       expect(await store.listConnectorKeys()).toEqual([])
@@ -657,16 +657,16 @@ export function runDataStoreConformance(
       expect((await store.listConnectorKeys())[0].last_used_at).not.toBeNull()
 
       expect(await store.revokeConnectorKey(id)).toBe(true)
-      // Révoquer deux fois ne réussit qu'une fois.
+      // Revoking twice only succeeds once.
       expect(await store.revokeConnectorKey(id)).toBe(false)
-      // Une clé révoquée n'authentifie plus rien.
+      // A revoked key no longer authenticates anything.
       expect(await store.findConnectorKeyByHash('hash-1')).toBeNull()
       expect((await store.listConnectorKeys())[0].revoked_at).not.toBeNull()
     })
 
     // ── Sources ────────────────────────────────────────────────────────────
 
-    it('retrouve une source par son URL et par son identifiant', async () => {
+    it('finds a source by its URL and by its id', async () => {
       const store = await harness.freshStore()
       const created = await store.createSource({
         url: 'https://f.dev',
@@ -677,13 +677,13 @@ export function runDataStoreConformance(
       const byUrl = await store.findSourceByUrl('https://f.dev')
       expect(byUrl?.id).toBe(created.id)
       expect(byUrl?.type).toBe('podcast')
-      // La config revient telle qu'elle a été écrite, quel que soit son stockage.
+      // The config comes back as it was written, whatever its storage.
       expect(byUrl?.config).toEqual({ retention_days: 15 })
       expect((await store.getSource(created.id))?.url).toBe('https://f.dev')
-      expect(await store.findSourceByUrl('https://absente.dev')).toBeNull()
+      expect(await store.findSourceByUrl('https://absent.dev')).toBeNull()
     })
 
-    it('met à jour la config sans changer le type', async () => {
+    it('updates the config without changing the type', async () => {
       const store = await harness.freshStore()
       const s = await store.createSource({
         url: 'https://g.dev',
@@ -698,7 +698,7 @@ export function runDataStoreConformance(
       expect(after?.type).toBe('podcast')
     })
 
-    it('renomme l’URL d’une source, refuse un doublon', async () => {
+    it("renames a source's URL, refuses a duplicate", async () => {
       const store = await harness.freshStore()
       const a = await store.createSource({
         url: 'https://rename-a.dev',
@@ -719,12 +719,12 @@ export function runDataStoreConformance(
       await expect(
         store.updateSourceUrl(a.id, 'https://rename-b.dev'),
       ).rejects.toMatchObject({ code: '23505' })
-      // Le renommage refusé n'a pas dû faire bouger `a`.
+      // The refused rename must not have moved `a`.
       expect((await store.getSource(a.id))?.url).toBe('https://renamed.dev')
       expect((await store.getSource(b.id))?.url).toBe('https://rename-b.dev')
     })
 
-    it('compte les abonnés de chaque source', async () => {
+    it("counts each source's subscribers", async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
       const s = await store.createSource({
@@ -738,7 +738,7 @@ export function runDataStoreConformance(
       expect(listed.find((r) => r.id === s.id)?.subscriber_count).toBe('1')
     })
 
-    it('indique l’état d’abonnement pour un type donné', async () => {
+    it('reports the subscription state for a given type', async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
       const followed = await store.createSource({
@@ -759,9 +759,9 @@ export function runDataStoreConformance(
       expect(rows.find((r) => r.id !== followed.id)?.is_subscribed).toBe(false)
     })
 
-    // ── Abonnements ────────────────────────────────────────────────────────
+    // ── Subscriptions ──────────────────────────────────────────────────────
 
-    it('refuse un abonnement en double', async () => {
+    it('refuses a duplicate subscription', async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
       const s = await store.createSource({
@@ -774,7 +774,7 @@ export function runDataStoreConformance(
       expect(await store.subscribe(user.id, s.id)).toBeNull()
     })
 
-    it('désabonne, et le signale quand il n’y avait rien', async () => {
+    it('unsubscribes, and reports when there was nothing', async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
       const s = await store.createSource({
@@ -789,7 +789,7 @@ export function runDataStoreConformance(
       expect(await store.countSubscribers(s.id)).toBe(0)
     })
 
-    it('rend les abonnements avec l’URL et le provider de la source', async () => {
+    it("returns subscriptions with the source's URL and provider", async () => {
       const store = await harness.freshStore()
       const user = await newUser(store)
       const s = await store.createSource({
@@ -815,35 +815,35 @@ export function runDataStoreConformance(
       })
     })
 
-    // ── Utilisateurs ───────────────────────────────────────────────────────
+    // ── Users ──────────────────────────────────────────────────────────────
 
-    it('crée un utilisateur et refuse un e-mail déjà pris', async () => {
+    it('creates a user and refuses an already-taken e-mail', async () => {
       const store = await harness.freshStore()
       const created = await store.createCredentialUser({
         name: 'Ada',
         email: 'ada@example.com',
         passwordHash: 'hash',
       })
-      if (!created) throw new Error('création inattendue en échec')
+      if (!created) throw new Error('unexpected creation failure')
       expect(created).not.toBeNull()
 
       expect(
         await store.createCredentialUser({
-          name: 'Autre',
+          name: 'Other',
           email: 'ada@example.com',
           passwordHash: 'hash',
         }),
       ).toBeNull()
     })
 
-    it('retrouve un compte par e-mail avec son empreinte', async () => {
+    it('finds an account by e-mail with its hash', async () => {
       const store = await harness.freshStore()
       const created = await store.createCredentialUser({
         name: 'Ada',
         email: 'ada@example.com',
         passwordHash: 'hash',
       })
-      if (!created) throw new Error('création inattendue en échec')
+      if (!created) throw new Error('unexpected creation failure')
 
       const found = await store.findCredentialByEmail('ada@example.com')
       expect(found).toMatchObject({
@@ -855,7 +855,7 @@ export function runDataStoreConformance(
       expect(await store.findCredentialByEmail('absent@example.com')).toBeNull()
     })
 
-    it('signale un conflit d’e-mail à la mise à jour', async () => {
+    it('reports an e-mail conflict on update', async () => {
       const store = await harness.freshStore()
       const a = await newUser(store, 'a@example.com')
       await store.createCredentialUser({
@@ -864,8 +864,8 @@ export function runDataStoreConformance(
         passwordHash: 'x',
       })
 
-      // Le code 23505 est la façon convenue de dire « e-mail déjà pris », quel
-      // que soit le moteur : les routes s'y réfèrent pour répondre 409.
+      // Code 23505 is the agreed way to say "e-mail already taken", whatever
+      // the engine: routes rely on it to answer 409.
       await expect(
         store.updateUser(a.id, { email: 'b@example.com' }),
       ).rejects.toMatchObject({
@@ -873,14 +873,14 @@ export function runDataStoreConformance(
       })
     })
 
-    it('change le nom, l’e-mail et le mot de passe', async () => {
+    it('changes the name, e-mail and password', async () => {
       const store = await harness.freshStore()
       const u = await store.createCredentialUser({
         name: 'Ada',
         email: 'ada@example.com',
         passwordHash: 'old',
       })
-      if (!u) throw new Error('création inattendue en échec')
+      if (!u) throw new Error('unexpected creation failure')
 
       await store.updateUser(u.id, {
         name: 'Ada L',
@@ -893,13 +893,13 @@ export function runDataStoreConformance(
         email: 'ada2@example.com',
       })
       expect(await store.getCredentialHash(u.id)).toBe('new')
-      // Le compte suit la nouvelle adresse, sinon les deux divergent.
+      // The account follows the new address, otherwise the two diverge.
       expect(
         await store.findCredentialByEmail('ada2@example.com'),
       ).not.toBeNull()
     })
 
-    it('supprime un utilisateur, et le signale s’il n’existait pas', async () => {
+    it('deletes a user, and reports when it did not exist', async () => {
       const store = await harness.freshStore()
       const u = await newUser(store)
 
@@ -909,7 +909,7 @@ export function runDataStoreConformance(
       expect(await store.getUser(u.id)).toBeNull()
     })
 
-    it('rattache et retrouve un compte OAuth', async () => {
+    it('links and finds an OAuth account', async () => {
       const store = await harness.freshStore()
       const created = await store.createOAuthUser({
         name: 'Ada',
@@ -921,7 +921,7 @@ export function runDataStoreConformance(
       expect(await store.findOAuthAccount('github', 'gh-1')).toEqual({
         user_id: created.id,
       })
-      expect(await store.findOAuthAccount('github', 'inconnu')).toBeNull()
+      expect(await store.findOAuthAccount('github', 'unknown')).toBeNull()
       expect(await store.findUserByEmail('ada@example.com')).toMatchObject({
         name: 'Ada',
       })
@@ -931,9 +931,9 @@ export function runDataStoreConformance(
       })
     })
 
-    // ── Inscriptions en attente (REGISTRATION_MODE=approval) ───────────────
+    // ── Pending sign-ups (REGISTRATION_MODE=approval) ──────────────────────
 
-    it('suit le cycle de vie d’une inscription en attente (e-mail)', async () => {
+    it("follows a pending sign-up's lifecycle (e-mail)", async () => {
       const store = await harness.freshStore()
 
       expect(await store.listPendingUsers()).toEqual([])
@@ -944,12 +944,12 @@ export function runDataStoreConformance(
         email: 'ada@example.com',
         passwordHash: 'hash',
       })
-      if (!created) throw new Error('création inattendue en échec')
+      if (!created) throw new Error('unexpected creation failure')
 
-      // Un deuxième e-mail identique est refusé.
+      // A second identical e-mail is refused.
       expect(
         await store.createPendingUser({
-          name: 'Autre',
+          name: 'Other',
           email: 'ada@example.com',
           passwordHash: 'x',
         }),
@@ -976,7 +976,7 @@ export function runDataStoreConformance(
       expect(await store.listPendingUsers()).toEqual([])
     })
 
-    it('porte le provider OAuth d’une inscription en attente', async () => {
+    it("carries a pending sign-up's OAuth provider", async () => {
       const store = await harness.freshStore()
       const created = await store.createPendingUser({
         name: 'Grace',
@@ -984,7 +984,7 @@ export function runDataStoreConformance(
         oauthProvider: 'github',
         oauthAccountId: 'gh-42',
       })
-      if (!created) throw new Error('création inattendue en échec')
+      if (!created) throw new Error('unexpected creation failure')
 
       expect(await store.getPendingUser(created.id)).toMatchObject({
         password_hash: null,
@@ -993,9 +993,9 @@ export function runDataStoreConformance(
       })
     })
 
-    // ── Bases de données secondaires ──────────────────────────────────────
+    // ── Secondary databases ──────────────────────────────────────────────
 
-    it('suit le cycle de vie d’une base secondaire', async () => {
+    it("follows a secondary database's lifecycle", async () => {
       const store = await harness.freshStore()
 
       expect(await store.listDataSources()).toEqual([])
@@ -1014,7 +1014,7 @@ export function runDataStoreConformance(
       expect(await store.listDataSources()).toEqual([])
     })
 
-    it('suit les abonnements à des flux de bases secondaires', async () => {
+    it("follows subscriptions to secondary databases' fluxes", async () => {
       const store = await harness.freshStore()
       const u = await newUser(store)
       const { id: dsId } = await store.createDataSource({
@@ -1036,7 +1036,7 @@ export function runDataStoreConformance(
         provider: 'rss',
         source_url: 'https://x.dev/feed',
       })
-      // Doublon (user, base, URL) → refusé.
+      // Duplicate (user, database, URL) → refused.
       expect(
         await store.subscribeExternal(u.id, dsId, 'rss', 'https://x.dev/feed'),
       ).toBeNull()
@@ -1055,15 +1055,15 @@ export function runDataStoreConformance(
         await store.unsubscribeExternal(u.id, dsId, 'https://x.dev/feed'),
       ).toBe(false)
 
-      // Retirer la base retire ses abonnements en cascade.
+      // Removing the database removes its subscriptions in cascade.
       await store.subscribeExternal(u.id, dsId, 'rss', 'https://y.dev/feed')
       await store.deleteDataSource(dsId)
       expect(await store.listExternalSubscriptions(u.id)).toEqual([])
     })
 
-    // ── Réglage d'approbation d'un provider ────────────────────────────────
+    // ── Provider approval setting ─────────────────────────────────────────
 
-    it('bascule le mode d’approbation d’un provider', async () => {
+    it("toggles a provider's approval mode", async () => {
       const store = await harness.freshStore()
       await harness.seedProvider(store, 'rss', [])
       await harness.seedRegistry(store, [
@@ -1079,9 +1079,9 @@ export function runDataStoreConformance(
       expect((await store.readRegistry(['rss']))[0].flux_approval).toBe('auto')
     })
 
-    // ── Demandes de flux (file d'approbation) ──────────────────────────────
+    // ── Flux requests (approval queue) ───────────────────────────────────
 
-    it('suit le cycle de vie d’une demande de flux', async () => {
+    it("follows a flux request's lifecycle", async () => {
       const store = await harness.freshStore()
       const u = await newUser(store)
 
@@ -1099,8 +1099,8 @@ export function runDataStoreConformance(
       expect(
         await store.findPendingFluxRequest(u.id, 'rss', 'https://n.dev'),
       ).toMatchObject({ id: created.id })
-      // La demande est portée par (user, provider, url) : un autre provider ne
-      // la retrouve pas.
+      // The request is keyed by (user, provider, url): another provider does
+      // not find it.
       expect(
         await store.findPendingFluxRequest(u.id, 'scrap', 'https://n.dev'),
       ).toBeNull()
@@ -1123,9 +1123,9 @@ export function runDataStoreConformance(
       ).toBeNull()
     })
 
-    // ── Administrateurs ────────────────────────────────────────────────────
+    // ── Administrators ─────────────────────────────────────────────────────
 
-    it('gère le cycle de vie d’un administrateur', async () => {
+    it("manages an administrator's lifecycle", async () => {
       const store = await harness.freshStore()
 
       expect(await store.findAdminByEmail('root@stayup.test')).toBeNull()
@@ -1148,8 +1148,8 @@ export function runDataStoreConformance(
       })
       const opsId = (ops as { id: string }).id
 
-      // E-mail déjà pris → null. (Les appelants passent l'e-mail déjà
-      // normalisé en minuscules, comme pour les comptes utilisateurs.)
+      // E-mail already taken → null. (Callers pass the e-mail already
+      // normalized to lowercase, as for user accounts.)
       expect(
         await store.createAdmin({
           email: 'ops@stayup.test',
@@ -1182,7 +1182,7 @@ export function runDataStoreConformance(
         (await store.findAdminByEmail('ops@stayup.test'))?.password_hash,
       ).toBe('hash-ops-2')
 
-      // Renommer sur un e-mail déjà pris → erreur code '23505'.
+      // Renaming to an already-taken e-mail → error code '23505'.
       await expect(
         store.updateAdmin(opsId, { email: 'root@stayup.test' }),
       ).rejects.toMatchObject({ code: '23505' })

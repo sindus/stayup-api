@@ -110,7 +110,7 @@ describe('DELETE /ui/repositories/:repoId/data', () => {
     const sql = createSqlMock()
     sql
       .mockResolvedValueOnce([{ id: 1, type: 'unknown' }]) // SELECT repository
-      .mockResolvedValueOnce([]) // getTableForProvider: aucune table trouvée
+      .mockResolvedValueOnce([]) // getTableForProvider: no table found
     sql.unsafe = vi.fn()
     vi.mocked(getSql).mockReturnValue(sql as never)
 
@@ -167,7 +167,7 @@ describe('DELETE /ui/repositories/:repoId', () => {
   })
 })
 
-// ─── Création de repository (admin) ───────────────────────────────────────────
+// ─── Repository creation (admin) ─────────────────────────────────────────────
 
 describe('POST /ui/repositories', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -208,8 +208,8 @@ describe('POST /ui/repositories', () => {
   })
 
   it('creates the repository and returns 201', async () => {
-    // La route regarde d'abord si l'URL existe déjà, pour ne pas convertir
-    // silencieusement le type d'une source partagée.
+    // The route first checks whether the URL already exists, so as not to
+    // silently convert a shared source's type.
     mockSql([[], [{ id: 7, url: 'https://example.com/feed', type: 'rss' }]])
     const res = await app.request(
       '/ui/repositories',
@@ -283,7 +283,7 @@ describe('PATCH /ui/repositories/:repoId', () => {
   })
 
   it('returns 409 when the new url is already taken', async () => {
-    // getSource ; updateSourceUrl (rejette avec code 23505)
+    // getSource; updateSourceUrl (rejects with code 23505)
     const sql = createSqlMock()
     sql
       .mockResolvedValueOnce([SAMPLE_REPO])
@@ -324,9 +324,9 @@ describe('PATCH /ui/repositories/:repoId', () => {
   })
 })
 
-// ─── Régression : identifiant non numérique ───────────────────────────────────
+// ─── Regression: non-numeric id ──────────────────────────────────────────────
 
-describe('identifiant de repository non numérique', () => {
+describe('non-numeric repository id', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 404 instead of 500 on DELETE /ui/repositories/:repoId', async () => {
@@ -352,21 +352,21 @@ describe('identifiant de repository non numérique', () => {
   })
 })
 
-// ─── Auth par clé connector, scopée à son propre provider ──────────────────────
-// Un connector qui gère lui-même ses flux (ex. stayup-cmd-scrap/admin.py) n'a
-// plus besoin d'un compte admin dédié : sa clé /connector-api existante suffit,
-// mais seulement pour les repositories de son propre type.
+// ─── Auth by connector key, scoped to its own provider ────────────────────────
+// A connector that manages its own fluxes (e.g. stayup-cmd-scrap/admin.py) no
+// longer needs a dedicated admin account: its existing /connector-api key is
+// but only for repositories of its own type.
 
 const connectorKeyHeaders = { Authorization: 'Bearer stayup_conn_testkey' }
 
-// La clé traverse `ensureConnectorKeyTable` (sql.unsafe) puis le SELECT de
-// `findConnectorKeyByHash`, puis `touchConnectorKeyUsage` (best-effort) —
-// trois appels sql consommés avant même d'atteindre la route.
+// The key goes through `ensureConnectorKeyTable` (sql.unsafe) then the SELECT
+// of `findConnectorKeyByHash`, then `touchConnectorKeyUsage` (best-effort) —
+// three sql calls consumed before the route is even reached.
 function keyAuthResponses(provider: string) {
   return [[], [{ id: 'key1', provider }], []]
 }
 
-describe('Auth par clé connector sur /ui/repositories', () => {
+describe('Auth by connector key on /ui/repositories', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 401 for an unknown connector key', async () => {
@@ -432,9 +432,9 @@ describe('Auth par clé connector sur /ui/repositories', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(403)
-    // 2 appels sql taggés de l'auth (le 3e, ensureConnectorKeyTable, passe par
-    // .unsafe et n'est pas compté ici), aucun de plus : refusé avant toute
-    // lecture de source.
+    // 2 tagged sql calls from auth (the 3rd, ensureConnectorKeyTable, goes
+    // through .unsafe and is not counted here), no more: refused before any
+    // source read.
     expect(sql).toHaveBeenCalledTimes(2)
   })
 
@@ -500,6 +500,6 @@ describe('Auth par clé connector sur /ui/repositories', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(404)
-    expect(sql).toHaveBeenCalledTimes(3) // 2 (auth) + getSource, arrêté avant toute suppression
+    expect(sql).toHaveBeenCalledTimes(3) // 2 (auth) + getSource, stopped before any deletion
   })
 })

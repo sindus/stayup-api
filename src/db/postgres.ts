@@ -1,9 +1,9 @@
 /**
- * Adaptateur PostgreSQL — l'implémentation de référence du contrat `DataStore`.
+ * PostgreSQL adapter — the reference implementation of the `DataStore` contract.
  *
- * Les requêtes sont celles qui étaient auparavant écrites directement dans les
- * routes : à comportement égal, rien ne doit changer pour un déploiement Postgres.
- * C'est aussi le fichier à lire pour écrire un adaptateur d'un autre moteur.
+ * The queries are the ones that used to be written directly in the routes: at
+ * equal behavior, nothing should change for a Postgres deployment. This is also
+ * the file to read when writing an adapter for another engine.
  */
 
 import type postgres from 'postgres'
@@ -30,13 +30,13 @@ import type {
 } from './port.js'
 
 /**
- * Répare une config doublement sérialisée.
+ * Repairs a doubly-serialized config.
  *
- * L'écriture passait jusqu'ici une chaîne suivie de `::jsonb` : postgres.js en
- * déduisait le type du paramètre et la sérialisait une seconde fois, si bien que
- * la base stockait un jsonb de type `string` au lieu de `object`. L'écriture est
- * corrigée, mais les lignes déjà en base le sont restées — on les rend lisibles
- * ici plutôt que par une migration qu'aucun auto-hébergeur ne penserait à lancer.
+ * Writes used to pass a string followed by `::jsonb`: postgres.js inferred the
+ * parameter type from it and serialized it a second time, so the database
+ * stored a jsonb of type `string` instead of `object`. Writes are fixed, but
+ * the rows already in the database stayed that way — we make them readable here
+ * rather than through a migration no self-hoster would think to run.
  */
 function repairConfig<T extends { config?: unknown }>(row: T): T {
   if (typeof row.config !== 'string') return row
@@ -48,11 +48,11 @@ function repairConfig<T extends { config?: unknown }>(row: T): T {
 }
 
 /**
- * Le `template` d'un provider n'est relayé que s'il en a déclaré un : une ligne
- * sans manifeste ressort sans la clé (et non `template: null`), pour que la
- * forme soit identique à celle d'avant la colonne. Une chaîne double-sérialisée
- * (même travers que `config`) est réparée au passage. `flux_approval` est
- * toujours présent, `auto` par défaut.
+ * A provider's `template` is only relayed if it declared one: a row with no
+ * manifest comes out without the key (not `template: null`), so the shape is
+ * identical to the one from before the column existed. A doubly-serialized
+ * string (same quirk as `config`) is repaired along the way. `flux_approval` is
+ * always present, `auto` by default.
  */
 function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   const base: RegistryEntry = {
@@ -61,8 +61,8 @@ function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
     sort_order: row.sort_order,
     flux_approval: row.flux_approval === 'manual' ? 'manual' : 'auto',
   }
-  // `retention_days` n'apparaît que si un admin en a posé une : sinon le
-  // provider suit le défaut global, et la clé reste absente.
+  // `retention_days` only shows up if an admin set one: otherwise the provider
+  // follows the global default, and the key stays absent.
   const retention = Number(row.retention_days)
   if (Number.isFinite(retention) && row.retention_days != null) {
     base.retention_days = retention
@@ -80,11 +80,11 @@ function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
 export class PostgresStore implements DataStore {
   constructor(private readonly sql: postgres.Sql) {}
 
-  // ── Découverte ────────────────────────────────────────────────────────────
+  // ── Discovery ─────────────────────────────────────────────────────────────
 
-  /** Auto-cicatrisation : la table peut manquer sur un déploiement Workers où
-   *  le schéma SQL n'est jamais appliqué et où aucun connector n'a encore
-   *  jamais appelé `registerProvider`. */
+  /** Self-healing: the table can be missing on a Workers deployment where the
+   *  SQL schema is never applied and no connector has ever called
+   *  `registerProvider` yet. */
   private async ensureProviderRegistryTable(): Promise<void> {
     await this.sql
       .unsafe(
@@ -96,7 +96,7 @@ export class PostgresStore implements DataStore {
            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
       )
       .catch(() => {})
-    // Registre créé par une version antérieure : la colonne peut manquer.
+    // Registry created by an earlier version: the column can be missing.
     await this.sql
       .unsafe(
         'ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER',
@@ -104,7 +104,7 @@ export class PostgresStore implements DataStore {
       .catch(() => {})
   }
 
-  /** Noms de `provider_registry`, tolérant l'absence de la table. */
+  /** Names from `provider_registry`, tolerating the table's absence. */
   private async registeredNames(): Promise<string[]> {
     try {
       const rows = await this.sql<{ name: string }[]>`
@@ -116,8 +116,8 @@ export class PostgresStore implements DataStore {
     }
   }
 
-  /** Noms distincts avec du contenu, tolérant l'absence de la table — chacune
-   *  des deux sources peut manquer indépendamment de l'autre. */
+  /** Distinct names that have content, tolerating the table's absence — either
+   *  of the two sources can be missing independently of the other. */
   private async namesWithContent(): Promise<string[]> {
     try {
       const rows = await this.sql<{ provider: string }[]>`
@@ -144,7 +144,7 @@ export class PostgresStore implements DataStore {
       `
       if (row) return true
     } catch {
-      // table absente : retombe sur la deuxième source
+      // table missing: fall back to the second source
     }
     try {
       const [row] = await this.sql<{ provider: string }[]>`
@@ -157,13 +157,14 @@ export class PostgresStore implements DataStore {
   }
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
-    // `provider_registry` n'appartient pas à l'API : c'est le premier collecteur
-    // démarré qui la crée. Son absence n'est pas une erreur, juste un registre vide.
+    // `provider_registry` does not belong to the API: the first collector to
+    // start is the one that creates it. Its absence is not an error, just an
+    // empty registry.
     //
-    // On dégrade colonne par colonne sur `42703` (colonne absente) : d'abord
-    // sans `retention_days` (registre pas encore migré par un write récent —
-    // surtout ne pas perdre `template` / `flux_approval` au passage, sinon les
-    // apps perdent icônes et mise en forme), puis au strict minimum.
+    // We degrade column by column on `42703` (missing column): first without
+    // `retention_days` (registry not migrated by a recent write yet — above all
+    // do not lose `template` / `flux_approval` in the process, otherwise apps
+    // lose icons and formatting), then down to the bare minimum.
     const isMissingColumn = (err: unknown) =>
       (err as { code?: string }).code === '42703'
 
@@ -204,8 +205,8 @@ export class PostgresStore implements DataStore {
     name: string,
     approval: 'auto' | 'manual',
   ): Promise<void> {
-    // Auto-cicatrisation : la colonne peut manquer sur un déploiement Workers
-    // où le schéma SQL n'est jamais appliqué. Le premier réglage admin la crée.
+    // Self-healing: the column can be missing on a Workers deployment where the
+    // SQL schema is never applied. The first admin setting creates it.
     await this.sql
       .unsafe(
         `ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS flux_approval TEXT NOT NULL DEFAULT 'auto'`,
@@ -216,11 +217,11 @@ export class PostgresStore implements DataStore {
     `
   }
 
-  // ── Contenu ───────────────────────────────────────────────────────────────
-  // Une seule table `connector_item`, partagée par tous les providers
-  // (`provider` filtré par valeur — plus par nom de table interpolé).
+  // ── Content ───────────────────────────────────────────────────────────────
+  // A single `connector_item` table, shared by every provider (`provider`
+  // filtered by value — no longer by an interpolated table name).
 
-  /** Auto-cicatrisation, même raison que `ensureProviderRegistryTable`. */
+  /** Self-healing, same reason as `ensureProviderRegistryTable`. */
   private async ensureConnectorItemTable(): Promise<void> {
     await this.sql
       .unsafe(
@@ -271,8 +272,8 @@ export class PostgresStore implements DataStore {
         ORDER BY repository_id, executed_at DESC
       `
     } catch (err) {
-      // Une lecture qui échoue ne doit pas casser le feed entier, mais
-      // l'avaler en silence donnait un feed vide inexplicable.
+      // A failed read must not break the whole feed, but swallowing it silently
+      // gave an inexplicable empty feed.
       console.error(`Failed to read provider "${provider}":`, err)
       return []
     }
@@ -288,7 +289,7 @@ export class PostgresStore implements DataStore {
     `
   }
 
-  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+  // ── Collected content (writes, reserved for connectors) ──────────────────
 
   async insertContentItems(
     provider: string,
@@ -345,10 +346,10 @@ export class PostgresStore implements DataStore {
       WHERE type = ${provider}
       ORDER BY id
     `
-    // Normalisé (configShape.ts), pas seulement réparé (repairConfig, qui ne
-    // traite que la double sérialisation) : un connector ne doit jamais
-    // recevoir un `config` qui ne serait pas un objet, ou il ferait
-    // `config.get(...)` dessus sans y penser.
+    // Normalized (configShape.ts), not just repaired (repairConfig, which only
+    // handles double serialization): a connector must never receive a `config`
+    // that is not an object, or it would call `config.get(...)` on it without
+    // thinking.
     return rows.map((r) => ({ ...r, config: normalizeConfigObject(r.config) }))
   }
 
@@ -356,10 +357,10 @@ export class PostgresStore implements DataStore {
     id: number,
     partial: Record<string, unknown>,
   ): Promise<void> {
-    // Lu-normalisé-fusionné-réécrit plutôt qu'un `config || $1` : certaines
-    // lignes de production ont un `config` corrompu (tableau, chaîne — voir
-    // configShape.ts), sur lequel `||` composerait la corruption au lieu de
-    // fusionner. Cette voie répare la ligne au passage.
+    // Read-normalized-merged-rewritten rather than a `config || $1`: some
+    // production rows have a corrupted `config` (array, string — see
+    // configShape.ts), on which `||` would compound the corruption instead of
+    // merging. This path repairs the row along the way.
     const [row] = await this.sql<{ config: unknown }[]>`
       SELECT config FROM repository WHERE id = ${id}
     `
@@ -372,10 +373,9 @@ export class PostgresStore implements DataStore {
     `
   }
 
-  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
-   *  (via `repository.type`) partout ailleurs. Le paramètre est gardé pour la
-   *  symétrie de l'appel côté route, où une erreur peut survenir sans source
-   *  identifiée. */
+  /** `log` has no `provider` column: it is derived from `repository_id` (via
+   *  `repository.type`) everywhere else. The parameter is kept for symmetry with
+   *  the route-side call, where an error can occur with no identified source. */
   async logConnectorError(
     _provider: string,
     repositoryId: number | null,
@@ -407,7 +407,7 @@ export class PostgresStore implements DataStore {
     `
   }
 
-  // ── Maintenance : rétention du contenu ────────────────────────────────────
+  // ── Maintenance: content retention ───────────────────────────────────────
 
   private async ensureAppSettingTable(): Promise<void> {
     await this.sql
@@ -421,9 +421,9 @@ export class PostgresStore implements DataStore {
     const rows = await this.sql<{ value: string }[]>`
       SELECT value FROM app_setting WHERE key = 'content_retention_days'
     `.catch(() => [] as { value: string }[])
-    if (rows.length === 0) return 30 // défaut intégré
+    if (rows.length === 0) return 30 // built-in default
     const n = Number(rows[0].value)
-    return Number.isFinite(n) && n > 0 ? n : null // '', 'off', 0… → pas de purge
+    return Number.isFinite(n) && n > 0 ? n : null // '', 'off', 0… → no purge
   }
 
   async setContentRetentionDefault(days: number | null): Promise<void> {
@@ -475,7 +475,7 @@ export class PostgresStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
-    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    // `template` omitted (undefined): we do not touch the one already stored.
     if (entry.template === undefined) {
       await this.sql`
         INSERT INTO provider_registry (name, display_name, sort_order)
@@ -500,7 +500,7 @@ export class PostgresStore implements DataStore {
     `
   }
 
-  // ── Clés d'API des connectors ───────────────────────────────────────────────
+  // ── Connector API keys ─────────────────────────────────────────────────────
 
   private async ensureConnectorKeyTable(): Promise<void> {
     await this.sql
@@ -600,8 +600,8 @@ export class PostgresStore implements DataStore {
   }
 
   async updateSourceUrl(id: number, url: string): Promise<void> {
-    // Violation d'unicité native Postgres : déjà '23505', pas besoin de la
-    // resynthétiser comme sur les autres moteurs.
+    // Native Postgres uniqueness violation: already '23505', no need to
+    // re-synthesize it like on the other engines.
     await this.sql`UPDATE repository SET url = ${url} WHERE id = ${id}`
   }
 
@@ -641,7 +641,7 @@ export class PostgresStore implements DataStore {
     return rows.map(repairConfig)
   }
 
-  // ── Abonnements ───────────────────────────────────────────────────────────
+  // ── Subscriptions ─────────────────────────────────────────────────────────
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
     const rows = await this.sql<SubscriptionRow[]>`
@@ -722,7 +722,7 @@ export class PostgresStore implements DataStore {
     return Number.parseInt(row.count, 10)
   }
 
-  // ── Utilisateurs et comptes ───────────────────────────────────────────────
+  // ── Users and accounts ───────────────────────────────────────────────────
 
   async createCredentialUser(user: NewUser): Promise<{ id: string } | null> {
     const userId = crypto.randomUUID()
@@ -730,11 +730,11 @@ export class PostgresStore implements DataStore {
     const now = new Date().toISOString()
 
     try {
-      // Les deux insertions doivent réussir ou échouer ensemble : sinon un échec
-      // sur `account` laisse un utilisateur orphelin dont l'e-mail reste pris.
+      // Both inserts must succeed or fail together: otherwise a failure on
+      // `account` leaves an orphan user whose e-mail stays taken.
       await this.sql.begin(async (transaction) => {
-        // `TransactionSql` est déclaré en Omit<Sql, …> : il perd la signature
-        // d'appel du tag SQL, d'où ce retypage.
+        // `TransactionSql` is declared as Omit<Sql, …>: it loses the SQL tag's
+        // call signature, hence this retyping.
         const tx = transaction as unknown as postgres.Sql
         await tx`
           INSERT INTO "user" (id, name, email, created_at, updated_at, email_verified)
@@ -752,9 +752,9 @@ export class PostgresStore implements DataStore {
     return { id: userId }
   }
 
-  // ── Inscriptions en attente ───────────────────────────────────────────────
+  // ── Pending sign-ups ─────────────────────────────────────────────────────
 
-  /** Workers n'applique jamais schema.sql : la table naît au premier usage. */
+  /** Workers never applies schema.sql: the table is born on first use. */
   private async ensurePendingUserTable(): Promise<void> {
     await this.sql
       .unsafe(
@@ -836,9 +836,9 @@ export class PostgresStore implements DataStore {
     }
   }
 
-  // ── Bases de données secondaires ─────────────────────────────────────────
+  // ── Secondary databases ────────────────────────────────────────────────
 
-  /** Workers n'applique jamais schema.sql : les tables naissent au premier usage. */
+  /** Workers never applies schema.sql: the tables are born on first use. */
   private async ensureMultiDbTables(): Promise<void> {
     await this.sql
       .unsafe(
@@ -985,8 +985,8 @@ export class PostgresStore implements DataStore {
           updated_at = ${now}
       WHERE id = ${userId}
     `
-    // `account.account_id` porte l'e-mail du compte : le laisser en arrière ferait
-    // diverger les deux tables à chaque changement d'adresse.
+    // `account.account_id` carries the account's e-mail: leaving it behind would
+    // make the two tables diverge on every address change.
     if (email !== null) {
       await this.sql`
         UPDATE account SET account_id = ${email}, updated_at = ${now}
@@ -1061,7 +1061,7 @@ export class PostgresStore implements DataStore {
     return row ?? null
   }
 
-  // ── Administrateurs ───────────────────────────────────────────────────────
+  // ── Administrators ────────────────────────────────────────────────────────
 
   async findAdminByEmail(email: string) {
     const [row] = await this.sql<
@@ -1136,7 +1136,7 @@ export class PostgresStore implements DataStore {
     return Number.parseInt(row.count, 10)
   }
 
-  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+  // ── Flux requests (approval queue) ───────────────────────────────────────
 
   async findPendingFluxRequest(userId: string, provider: string, url: string) {
     const [row] = await this.sql<{ id: string }[]>`

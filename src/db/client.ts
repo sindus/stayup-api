@@ -1,28 +1,28 @@
 import postgres from 'postgres'
 
-// Cloudflare Workers interdit de réutiliser un objet d'I/O (ex: un socket
-// TCP) ouvert par une requête différente de la requête en cours :
+// Cloudflare Workers forbids reusing an I/O object (e.g. a TCP socket) opened
+// by a request other than the one currently running:
 //
 //   Error: Cannot perform I/O on behalf of a different request. I/O objects
 //   (such as streams, request/response bodies, and others) created in the
 //   context of one request handler cannot be accessed from a different
 //   request's handler.
 //
-// L'ancien code mettait la connexion en cache dans une Map au niveau module,
-// réutilisée entre requêtes HTTP sur un isolate Workers réchauffé — ce qui
-// marche sur un serveur Node classique, mais viole cette règle sur Workers
-// et fait planter (500) toute requête qui atterrit sur un isolate ayant déjà
-// servi une requête précédente. On crée donc une connexion par appel.
+// The old code cached the connection in a module-level Map, reused across HTTP
+// requests on a warm Workers isolate — which works on a plain Node server, but
+// violates this rule on Workers and makes any request that lands on an isolate
+// which already served a previous request crash (500). So we create one
+// connection per call.
 //
-// Corollaire : ces connexions ne peuvent pas être retenues indéfiniment. Le registre
-// ci-dessous ne sert qu'à `closeSql()` (tests, arrêt propre d'un serveur Node) et
-// reste donc désactivé par défaut : l'activer en production ferait grossir le Set à
-// chaque requête sur un isolate réchauffé, sans que rien ne l'en retire jamais.
+// Corollary: these connections cannot be held forever. The registry below only
+// exists for `closeSql()` (tests, clean shutdown of a Node server) and is
+// therefore disabled by default: enabling it in production would grow the Set
+// on every request to a warm isolate, with nothing ever removing entries.
 const open = new Set<postgres.Sql>()
 let tracking = false
 
-/** Active le suivi des connexions ouvertes, nécessaire à `closeSql()`. Réservé aux
- *  tests et aux processus longs qui veulent s'arrêter proprement. */
+/** Enables tracking of open connections, required by `closeSql()`. Reserved for
+ *  tests and long-running processes that want to shut down cleanly. */
 export function trackOpenConnections(enabled: boolean): void {
   tracking = enabled
   if (!enabled) open.clear()
@@ -40,7 +40,7 @@ export function getSql(connectionString: string): postgres.Sql {
   return sql
 }
 
-// Ferme toutes les connexions suivies (voir trackOpenConnections).
+// Closes every tracked connection (see trackOpenConnections).
 export async function closeSql(): Promise<void> {
   const toClose = [...open]
   open.clear()

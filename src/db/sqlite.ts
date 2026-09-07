@@ -1,16 +1,16 @@
 /**
- * Adaptateur SQLite.
+ * SQLite adapter.
  *
- * Le contrat est le même que sous Postgres, à quatre différences près que
- * SQLite impose et que tout autre adaptateur SQL rencontrera :
+ * The contract is the same as under Postgres, with four differences SQLite
+ * imposes that any other SQL adapter will meet:
  *
- * - la découverte passe par `sqlite_master`, pas par `information_schema` ;
- * - `RETURNING` existe depuis 3.35 ; on l'utilise, mais sans en dépendre pour
- *   les insertions dont on connaît déjà la clé ;
- * - `config` est stocké en TEXT contenant du JSON : il faut le désérialiser
- *   en lecture, ce que Postgres fait tout seul avec jsonb ;
- * - il n'y a pas de tableau : `WHERE x = ANY($1)` devient un `IN (…)` construit
- *   à partir de la liste.
+ * - discovery goes through `sqlite_master`, not `information_schema`;
+ * - `RETURNING` has existed since 3.35; we use it, but do not depend on it for
+ *   inserts whose key we already know;
+ * - `config` is stored as TEXT containing JSON: it must be deserialized on
+ *   read, which Postgres does on its own with jsonb;
+ * - there is no array type: `WHERE x = ANY($1)` becomes an `IN (…)` built from
+ *   the list.
  */
 
 import { normalizeConfigObject } from './configShape.js'
@@ -54,10 +54,10 @@ function parseConfig<T extends { config?: unknown }>(row: T): T {
 }
 
 /**
- * `template` est stocké en TEXT (JSON) comme `config` : on le rend en objet pour
- * que la forme relayée par l'API soit la même quel que soit le moteur. Absent ou
- * illisible → la clé disparaît (et non `template: null`), l'app retombe alors
- * sur son rendu générique.
+ * `template` is stored as TEXT (JSON) like `config`: we return it as an object
+ * so the shape relayed by the API is the same whatever the engine. Absent or
+ * unreadable → the key disappears (not `template: null`), the app then falls
+ * back to its generic rendering.
  */
 function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   const base: RegistryEntry = {
@@ -80,7 +80,7 @@ function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   }
 }
 
-/** Marqueurs de paramètres pour une liste, SQLite n'ayant pas de type tableau. */
+/** Parameter markers for a list, since SQLite has no array type. */
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
@@ -96,14 +96,14 @@ export class SqliteStore implements DataStore {
     return (this.all<T>(sql, params)[0] as T | undefined) ?? null
   }
 
-  // ── Découverte ────────────────────────────────────────────────────────────
-  // Un provider « existe » dès qu'il a une ligne dans `provider_registry`
-  // (écrite par `registerProvider`) ou du contenu dans `connector_item` — le
-  // premier des deux qu'un connector écrit le rend déjà visible, chaque
-  // source tolérant l'absence de l'autre.
+  // ── Discovery ─────────────────────────────────────────────────────────────
+  // A provider "exists" as soon as it has a row in `provider_registry` (written
+  // by `registerProvider`) or content in `connector_item` — whichever a
+  // connector writes first already makes it visible, each source tolerating the
+  // absence of the other.
 
-  /** Auto-cicatrisation : la table peut manquer si aucun connector ne s'est
-   *  encore jamais enregistré sur cette base. */
+  /** Self-healing: the table can be missing if no connector has ever
+   *  registered on this database yet. */
   private ensureProviderRegistryTable(): void {
     try {
       this.db.run(
@@ -155,7 +155,7 @@ export class SqliteStore implements DataStore {
         return true
       }
     } catch {
-      // table absente : retombe sur la deuxième source
+      // table missing: fall back to the second source
     }
     try {
       return Boolean(
@@ -173,16 +173,16 @@ export class SqliteStore implements DataStore {
     if (names.length === 0) return []
     const where = `WHERE name IN (${placeholders(names.length)})`
 
-    // `retention_days` peut manquer sur un fichier créé avant la feature de
-    // rétention : on réessaie sans cette colonne plutôt que de renvoyer un
-    // registre vide (les apps perdraient icônes et mise en forme).
+    // `retention_days` can be missing on a file created before the retention
+    // feature: we retry without that column rather than return an empty
+    // registry (the apps would lose icons and formatting).
     try {
       return this.all<RegistryEntry>(
         `SELECT name, display_name, sort_order, template, flux_approval, retention_days FROM provider_registry ${where}`,
         names,
       ).map(normalizeRegistryRow)
     } catch {
-      // colonne ou table absente : on réessaie sans retention_days
+      // column or table missing: retry without retention_days
     }
 
     try {
@@ -191,7 +191,7 @@ export class SqliteStore implements DataStore {
         names,
       ).map(normalizeRegistryRow)
     } catch {
-      // Table absente : registre vide, pas une erreur. Voir listProviders().
+      // Table missing: empty registry, not an error. See listProviders().
       return []
     }
   }
@@ -206,8 +206,8 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Contenu ───────────────────────────────────────────────────────────────
-  // Une seule table `connector_item`, partagée par tous les providers.
+  // ── Content ───────────────────────────────────────────────────────────────
+  // A single `connector_item` table, shared by every provider.
 
   private ensureConnectorItemTable(): void {
     try {
@@ -235,7 +235,7 @@ export class SqliteStore implements DataStore {
   }
 
   async latestPerSource(provider: string): Promise<ContentRow[]> {
-    // Pas de DISTINCT ON en SQLite : une fenêtre fait le même travail.
+    // No DISTINCT ON in SQLite: a window function does the same job.
     return this.all<ContentRow>(
       `SELECT * FROM (
          SELECT *, ROW_NUMBER() OVER (
@@ -279,7 +279,7 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Contenu collecté (écriture, réservée aux connectors) ───────────────────
+  // ── Collected content (writes, reserved for connectors) ──────────────────
 
   async insertContentItems(
     provider: string,
@@ -334,14 +334,14 @@ export class SqliteStore implements DataStore {
       'SELECT id, url, type, config, created_at FROM repository WHERE type = ? ORDER BY id',
       [provider],
     )
-    // Normalisé (configShape.ts) : un connector ne doit jamais recevoir un
-    // `config` qui ne serait pas un objet.
+    // Normalized (configShape.ts): a connector must never receive a `config`
+    // that would not be an object.
     return rows.map((r) => ({ ...r, config: normalizeConfigObject(r.config) }))
   }
 
-  /** Lu, normalisé (voir configShape.ts — répare un `config` dégradé au
-   *  passage), fusionné en JS, réécrit. Une seule connexion, donc sans
-   *  concurrence à gérer ici. */
+  /** Read, normalized (see configShape.ts — repairs a degraded `config` along
+   *  the way), merged in JS, rewritten. A single connection, so no concurrency
+   *  to handle here. */
   async mergeSourceConfig(
     id: number,
     partial: Record<string, unknown>,
@@ -358,8 +358,8 @@ export class SqliteStore implements DataStore {
     ])
   }
 
-  /** `log` n'a pas de colonne `provider` : elle se déduit de `repository_id`
-   *  ailleurs. Le paramètre reste pour la symétrie de l'appel côté route. */
+  /** `log` has no `provider` column: it is derived from `repository_id`
+   *  elsewhere. The parameter stays for symmetry with the route-side call. */
   async logConnectorError(
     _provider: string,
     repositoryId: number | null,
@@ -386,9 +386,9 @@ export class SqliteStore implements DataStore {
     repositoryId: number,
     retentionDays: number,
   ): Promise<void> {
-    // Cutoff calculé en JS, au même format ISO que `executed_at` : la
-    // fonction `datetime()` de SQLite produit un format différent
-    // (espace au lieu de « T »), qui comparerait mal en chaîne.
+    // Cutoff computed in JS, in the same ISO format as `executed_at`:
+    // SQLite's `datetime()` function produces a different format (space instead
+    // of "T"), which would compare badly as a string.
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString()
@@ -398,7 +398,7 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Maintenance : rétention du contenu ────────────────────────────────────
+  // ── Maintenance: content retention ───────────────────────────────────────
 
   async getContentRetentionDefault(): Promise<number | null> {
     try {
@@ -454,7 +454,7 @@ export class SqliteStore implements DataStore {
       const cutoff = new Date(
         Date.now() - days * 24 * 60 * 60 * 1000,
       ).toISOString()
-      // `run()` ne rend pas le nombre de lignes touchées : on compte avant.
+      // `run()` does not return the number of affected rows: we count first.
       const [{ n }] = this.all<{ n: number }>(
         'SELECT count(*) AS n FROM connector_item WHERE provider = ? AND executed_at < ?',
         [provider, cutoff],
@@ -470,7 +470,7 @@ export class SqliteStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     this.ensureProviderRegistryTable()
-    // `template` omis (undefined) : on ne touche pas à celui déjà en base.
+    // `template` omitted (undefined): we do not touch the one already stored.
     if (entry.template === undefined) {
       this.db.run(
         `INSERT INTO provider_registry (name, display_name, sort_order)
@@ -498,7 +498,7 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Clés d'API des connectors ───────────────────────────────────────────────
+  // ── Connector API keys ─────────────────────────────────────────────────────
 
   private ensureConnectorKeyTable(): void {
     try {
@@ -598,7 +598,7 @@ export class SqliteStore implements DataStore {
     )
     const row = await this.findSourceByUrl(input.url)
     if (!row)
-      throw new Error(`repository "${input.url}" introuvable après insertion`)
+      throw new Error(`repository "${input.url}" not found after insert`)
     return row
   }
 
@@ -617,8 +617,8 @@ export class SqliteStore implements DataStore {
       'SELECT id FROM repository WHERE url = ? AND id != ?',
       [url, id],
     )
-    // Le code 23505 vient de Postgres, mais c'est devenu la façon convenue de
-    // dire « déjà pris » : les routes s'y réfèrent pour répondre 409.
+    // Code 23505 comes from Postgres, but it has become the agreed way to
+    // say "already taken": routes rely on it to answer 409.
     if (taken) {
       throw Object.assign(new Error('url already in use'), { code: '23505' })
     }
@@ -657,7 +657,7 @@ export class SqliteStore implements DataStore {
     }))
   }
 
-  // ── Abonnements ───────────────────────────────────────────────────────────
+  // ── Subscriptions ─────────────────────────────────────────────────────────
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
     return this.all<SubscriptionRow>(
@@ -739,7 +739,7 @@ export class SqliteStore implements DataStore {
     return Number(row?.count ?? 0)
   }
 
-  // ── Utilisateurs et comptes ───────────────────────────────────────────────
+  // ── Users and accounts ────────────────────────────────────────────────────
 
   async createCredentialUser(user: NewUser): Promise<{ id: string } | null> {
     if (this.one(`SELECT id FROM "user" WHERE lower(email) = ?`, [user.email]))
@@ -767,7 +767,7 @@ export class SqliteStore implements DataStore {
     return { id: userId }
   }
 
-  // ── Inscriptions en attente ───────────────────────────────────────────────
+  // ── Pending sign-ups ──────────────────────────────────────────────────────
 
   async createPendingUser(
     input: NewPendingUser,
@@ -828,7 +828,7 @@ export class SqliteStore implements DataStore {
     return existed
   }
 
-  // ── Bases de données secondaires ─────────────────────────────────────────
+  // ── Secondary databases ────────────────────────────────────────────────
 
   async listDataSources(): Promise<DataSourceRow[]> {
     return this.all<DataSourceRow>(
@@ -959,8 +959,8 @@ export class SqliteStore implements DataStore {
         `SELECT id FROM "user" WHERE lower(email) = ? AND id <> ?`,
         [patch.email, userId],
       )
-      // Le code d'erreur est celui de Postgres : les routes s'y réfèrent, c'est
-      // devenu la façon convenue de dire « e-mail déjà pris ».
+      // The error code is Postgres's: routes rely on it, it has become the
+      // agreed way to say "e-mail already taken".
       if (taken)
         throw Object.assign(new Error('email already in use'), {
           code: '23505',
@@ -1046,7 +1046,7 @@ export class SqliteStore implements DataStore {
     )
   }
 
-  // ── Administrateurs ───────────────────────────────────────────────────────
+  // ── Administrators ────────────────────────────────────────────────────────
 
   async findAdminByEmail(email: string) {
     const row = this.one<{
@@ -1124,7 +1124,7 @@ export class SqliteStore implements DataStore {
     return Number(row?.count ?? 0)
   }
 
-  // ── Demandes de flux (file d'approbation) ─────────────────────────────────
+  // ── Flux requests (approval queue) ───────────────────────────────────────
 
   async findPendingFluxRequest(userId: string, provider: string, url: string) {
     return this.one<{ id: string }>(
@@ -1148,7 +1148,7 @@ export class SqliteStore implements DataStore {
       'SELECT id, user_id, provider, url, status, created_at FROM flux_request WHERE id = ?',
       [id],
     )
-    if (!row) throw new Error('flux_request introuvable après insertion')
+    if (!row) throw new Error('flux_request not found after insert')
     return row
   }
 

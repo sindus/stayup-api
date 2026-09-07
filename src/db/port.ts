@@ -1,35 +1,34 @@
 /**
- * Le contrat que doit remplir chaque type de base de données.
+ * The contract every database type must fulfill.
  *
- * L'API ne parle plus SQL directement : elle appelle ces méthodes, et un
- * adaptateur les traduit pour son moteur. C'est ce qui permet d'héberger
- * l'API sur autre chose que PostgreSQL — y compris du NoSQL.
+ * The API no longer speaks SQL directly: it calls these methods, and an adapter
+ * translates them for its engine. This is what allows hosting the API on
+ * something other than PostgreSQL — including NoSQL.
  *
- * Deux règles pour qui écrit un adaptateur :
+ * Two rules for whoever writes an adapter:
  *
- * 1. Les noms employés ici (repository, user_repository, provider_registry,
- *    connector_item, connector_key, log) sont ceux du contrat documenté. Un
- *    adaptateur peut les stocker autrement, mais il doit exposer la même
- *    sémantique.
- * 2. Aucune méthode ne renvoie de type propre à un moteur. Les lignes de
- *    contenu d'un provider sont volontairement opaques : leur forme
- *    appartient au provider, pas à l'API.
+ * 1. The names used here (repository, user_repository, provider_registry,
+ *    connector_item, connector_key, log) are those of the documented contract.
+ *    An adapter may store them differently, but it must expose the same
+ *    semantics.
+ * 2. No method returns an engine-specific type. A provider's content rows are
+ *    deliberately opaque: their shape belongs to the provider, not the API.
  *
- * Le contenu collecté vit dans une seule table/collection `connector_item`,
- * partagée par tous les providers (colonne `provider` discriminante) — pas
- * une table `connector_<name>` par provider comme avant. Un provider « existe »
- * (`listProviderNames`/`providerExists`) dès qu'il a une ligne dans
- * `provider_registry` OU du contenu dans `connector_item` — l'un ou l'autre,
- * comme avant la fusion : la découverte ne doit pas dépendre de l'ordre dans
- * lequel un connector appelle `registerProvider` et `insertContentItems`.
+ * Collected content lives in a single `connector_item` table/collection, shared
+ * by every provider (discriminating `provider` column) — not a
+ * `connector_<name>` table per provider like before. A provider "exists"
+ * (`listProviderNames`/`providerExists`) as soon as it has a row in
+ * `provider_registry` OR content in `connector_item` — either one, as before the
+ * merge: discovery must not depend on the order in which a connector calls
+ * `registerProvider` and `insertContentItems`.
  *
- * Les connectors n'ont plus d'accès direct à la base : ils passent par l'API,
- * authentifiés par une clé (`connector_key`), scopée à un seul `provider`.
+ * Connectors no longer have direct database access: they go through the API,
+ * authenticated by a key (`connector_key`), scoped to a single `provider`.
  */
 
-// ─── Formes partagées ────────────────────────────────────────────────────────
+// ─── Shared shapes ──────────────────────────────────────────────────────────
 
-/** Une source suivie : un dépôt GitHub, un flux, une page… selon le provider. */
+/** A tracked source: a GitHub repository, a feed, a page… depending on the provider. */
 export interface Source {
   id: number
   url: string
@@ -38,7 +37,7 @@ export interface Source {
   created_at?: string
 }
 
-/** Une ligne de contenu produite par un provider. Sa forme lui appartient. */
+/** A content row produced by a provider. Its shape belongs to the provider. */
 export type ContentRow = Record<string, unknown>
 
 export interface RegistryEntry {
@@ -46,23 +45,24 @@ export interface RegistryEntry {
   display_name: string
   sort_order: number
   /**
-   * Manifeste d'affichage que le provider déclare pour les apps (colonne
-   * `provider_registry.template`, JSON libre). Absent tant qu'aucun collecteur
-   * à jour n'a tourné ou que le provider n'en publie pas — les apps retombent
-   * alors sur leur rendu générique. L'API ne l'interprète pas, elle le relaie.
+   * Display manifest the provider declares for the apps (column
+   * `provider_registry.template`, free-form JSON). Absent as long as no
+   * up-to-date collector has run or the provider does not publish one — apps
+   * then fall back to their generic rendering. The API does not interpret it, it
+   * relays it.
    */
   template?: unknown
   /**
-   * Mode d'ajout d'un flux par un utilisateur : `auto` (le flux est créé
-   * immédiatement) ou `manual` (une demande est mise en file d'attente pour un
-   * admin). Absent → `auto` (colonne `flux_approval` pas encore présente).
+   * Mode for a user adding a flux: `auto` (the flux is created immediately) or
+   * `manual` (a request is queued for an admin). Absent → `auto` (column
+   * `flux_approval` not present yet).
    */
   flux_approval?: 'auto' | 'manual'
   /**
-   * Surcharge de rétention du contenu de ce provider, en jours, posée par un
-   * admin (colonne `provider_registry.retention_days`). Absent → le provider
-   * suit le défaut global de l'instance. Sert à la purge centralisée
-   * (`purgeExpiredContent`), pas aux connectors.
+   * Content retention override for this provider, in days, set by an admin
+   * (column `provider_registry.retention_days`). Absent → the provider follows
+   * the instance's global default. Used by the centralized purge
+   * (`purgeExpiredContent`), not by connectors.
    */
   retention_days?: number
 }
@@ -99,9 +99,9 @@ export interface NewUser {
   passwordHash: string
 }
 
-/** Une inscription en attente de validation admin (REGISTRATION_MODE=approval).
- *  `password_hash` porté pour un compte e-mail, `oauth_*` pour un compte OAuth ;
- *  l'un ou l'autre, jamais les deux. */
+/** A sign-up awaiting admin approval (REGISTRATION_MODE=approval).
+ *  `password_hash` carried for an e-mail account, `oauth_*` for an OAuth account;
+ *  one or the other, never both. */
 export interface PendingUserRow {
   id: string
   name: string
@@ -120,8 +120,8 @@ export interface NewPendingUser {
   oauthAccountId?: string
 }
 
-/** Une base secondaire déclarée par un admin : lecture seule, ne sert qu'à
- *  agréger du contenu connector_*. `url_enc` est chiffré (voir db/secretbox.ts). */
+/** A secondary database declared by an admin: read-only, only used to aggregate
+ *  connector_* content. `url_enc` is encrypted (see db/secretbox.ts). */
 export interface DataSourceRow {
   id: number
   name: string
@@ -130,16 +130,16 @@ export interface DataSourceRow {
   created_at: string
 }
 
-/** Abonnement d'un utilisateur à un flux d'une base secondaire, identifié par
- *  (base, provider, URL du flux) — les id numériques ne traversent pas les bases. */
+/** A user's subscription to a flux from a secondary database, identified by
+ *  (database, provider, flux URL) — numeric ids do not cross databases. */
 export interface ExternalSubscriptionRow {
   data_source_id: number
   provider: string
   source_url: string
 }
 
-/** Un administrateur. Identité distincte d'un utilisateur : pas de feed, pas
- *  d'abonnement. `is_super` = habilité à gérer les autres admins. */
+/** An administrator. Identity distinct from a user: no feed, no subscription.
+ *  `is_super` = allowed to manage other admins. */
 export interface AdminRow {
   id: string
   email: string
@@ -155,10 +155,10 @@ export interface NewAdmin {
   isSuper: boolean
 }
 
-/** Une ligne de contenu à écrire, envoyée par un connector via l'API. Mêmes
- *  champs que ce que chaque `connector_<name>` portait avant la fusion —
- *  `params` ne sert aujourd'hui qu'à `scrap`, `version`/`datetime` sont
- *  optionnels (tous les providers ne les renseignent pas). */
+/** A content row to write, sent by a connector via the API. Same fields as what
+ *  each `connector_<name>` carried before the merge — `params` is only used by
+ *  `scrap` today, `version`/`datetime` are optional (not every provider sets
+ *  them). */
 export interface ContentItemInput {
   repositoryId: number
   version?: string | null
@@ -169,12 +169,11 @@ export interface ContentItemInput {
   success: boolean
 }
 
-/** Ce qu'un connector déclare de lui-même au démarrage, avant tout envoi de
- *  contenu — remplace l'auto-inscription SQL directe dans `provider_registry`.
- *  `sortOrder` n'est pas réécrit sur une inscription déjà existante, comme
- *  avant. `fluxApproval` n'est PAS de son ressort : seul un admin le change
- *  (voir `setProviderApproval`) — un connector ne peut pas se rendre `manual`
- *  ou `auto` lui-même. */
+/** What a connector declares about itself at startup, before sending any
+ *  content — replaces the direct SQL self-registration into `provider_registry`.
+ *  `sortOrder` is not rewritten on an already-existing registration, as before.
+ *  `fluxApproval` is NOT its concern: only an admin changes it (see
+ *  `setProviderApproval`) — a connector cannot make itself `manual` or `auto`. */
 export interface ProviderRegistration {
   name: string
   displayName: string
@@ -182,8 +181,8 @@ export interface ProviderRegistration {
   template?: unknown
 }
 
-/** Une clé d'API de connector, sans le secret (jamais réaffiché après sa
- *  création — voir `createConnectorKey`). */
+/** A connector API key, without the secret (never shown again after its
+ *  creation — see `createConnectorKey`). */
 export interface ConnectorKeyRow {
   id: string
   provider: string
@@ -201,129 +200,124 @@ export interface NewConnectorKey {
   keyPrefix: string
 }
 
-// ─── Le contrat ──────────────────────────────────────────────────────────────
+// ─── The contract ──────────────────────────────────────────────────────────
 
 export interface DataStore {
-  // ── Découverte des providers ──────────────────────────────────────────────
-  // Comment l'API sait quels providers existent : une ligne dans
-  // `provider_registry` (écrite par `registerProvider`) ou du contenu dans
-  // `connector_item` — le premier des deux qu'un connector écrit le rend déjà
-  // visible, sans dépendre de l'ordre de ses appels.
+  // ── Provider discovery ────────────────────────────────────────────────────
+  // How the API knows which providers exist: a row in `provider_registry`
+  // (written by `registerProvider`) or content in `connector_item` — whichever
+  // a connector writes first already makes it visible, without depending on the
+  // order of its calls.
 
-  /** Les noms de providers connus, d'une source ou de l'autre. */
+  /** The known provider names, from one source or the other. */
   listProviderNames(): Promise<string[]>
-  /** Ce provider a-t-il une trace, enregistrement ou contenu ? */
+  /** Does this provider have any trace, registration or content? */
   providerExists(name: string): Promise<boolean>
-  /** Noms affichés déclarés par les providers. Absence tolérée : voir getProviders. */
+  /** Display names declared by providers. Absence tolerated: see getProviders. */
   readRegistry(names: string[]): Promise<RegistryEntry[]>
-  /** Change le mode d'ajout de flux d'un provider (`auto` | `manual`). Admin
-   *  uniquement — un connector ne peut pas s'auto-approuver. */
+  /** Changes a provider's flux-adding mode (`auto` | `manual`). Admin only —
+   *  a connector cannot self-approve. */
   setProviderApproval(name: string, approval: 'auto' | 'manual'): Promise<void>
-  /** Auto-déclaration d'un connector au démarrage (nom affiché + template).
-   *  Idempotent : un second appel met à jour `displayName`, jamais `sortOrder`
-   *  ni `flux_approval`. `template` n'est remplacé (y compris par `null`) que
-   *  s'il est présent dans l'appel — un appel qui ne le fournit pas du tout
-   *  (`undefined`) laisse le template existant intact, pour ne pas effacer
-   *  l'affichage d'un provider sur un appel partiel (vécu en prod : un simple
-   *  test d'auth avec `{ displayName }` seul avait effacé le template de
-   *  `rss`). Crée la ligne si elle n'existe pas. */
+  /** A connector's self-declaration at startup (display name + template).
+   *  Idempotent: a second call updates `displayName`, never `sortOrder` or
+   *  `flux_approval`. `template` is only replaced (including with `null`) if it
+   *  is present in the call — a call that does not provide it at all
+   *  (`undefined`) leaves the existing template intact, so as not to wipe a
+   *  provider's display on a partial call (seen in prod: a simple auth test with
+   *  `{ displayName }` alone had wiped `rss`'s template). Creates the row if it
+   *  does not exist. */
   registerProvider(entry: ProviderRegistration): Promise<void>
 
-  // ── Contenu collecté ──────────────────────────────────────────────────────
+  // ── Collected content ─────────────────────────────────────────────────────
 
-  /** Tout le contenu d'un provider, ordre stable. */
+  /** All of a provider's content, stable order. */
   allContent(provider: string): Promise<ContentRow[]>
-  /** La ligne la plus récente pour chaque source de ce provider. */
+  /** The most recent row for each source of this provider. */
   latestPerSource(provider: string): Promise<ContentRow[]>
-  /** Les `limit` lignes les plus récentes, pour chacune des sources données. */
+  /** The `limit` most recent rows, for each of the given sources. */
   latestForSources(
     provider: string,
     sourceIds: number[],
     limit: number,
   ): Promise<ContentRow[]>
-  /** Supprime le contenu d'une source. Sans effet si le provider n'existe pas. */
+  /** Deletes a source's content. No effect if the provider does not exist. */
   deleteContentForSource(provider: string, sourceId: number): Promise<void>
 
-  // ── Contenu collecté (écriture, réservée aux connectors) ──────────────────
+  // ── Collected content (writes, reserved for connectors) ───────────────────
 
-  /** Écrit un lot de lignes pour ce provider en une fois. */
+  /** Writes a batch of rows for this provider in one go. */
   insertContentItems(provider: string, items: ContentItemInput[]): Promise<void>
-  /** `version` de la dernière ligne réussie pour cette source, ou null au
-   *  premier run — sert au connector à savoir où reprendre. */
+  /** `version` of the last successful row for this source, or null on the first
+   *  run — lets the connector know where to resume. */
   getLastKnownVersion(
     provider: string,
     repositoryId: number,
   ): Promise<string | null>
-  /** Toutes les `version` déjà connues pour cette source (jamais `null`) —
-   *  sert un connector qui doit combler des trous, pas juste reprendre après
-   *  la plus récente (ex. `changelog`, dont les releases GitHub peuvent
-   *  apparaître dans le désordre). */
+  /** Every `version` already known for this source (never `null`) — for a
+   *  connector that must fill gaps, not just resume after the most recent one
+   *  (e.g. `changelog`, whose GitHub releases can show up out of order). */
   listKnownVersions(provider: string, repositoryId: number): Promise<string[]>
-  /** Les sources suivies de ce provider (pas d'état d'abonnement : c'est un
-   *  connector qui appelle, pas un utilisateur). */
+  /** This provider's tracked sources (no subscription state: a connector is
+   *  calling, not a user). */
   listSourcesForProvider(provider: string): Promise<Source[]>
-  /** Fusionne (shallow merge, pas un remplacement) des clés dans
-   *  `repository.config` d'une source — ex. `rss` y range le titre du canal
-   *  pour l'affichage. Sans effet sur les clés absentes de `partial` : ne
-   *  jamais écraser `max_entries`/`retention_days` qu'un utilisateur ou un
-   *  admin a pu poser. Distinct de `updateSourceConfig` (admin), qui
-   *  remplace toute la config. */
+  /** Shallow-merges (not a replace) keys into a source's `repository.config` —
+   *  e.g. `rss` stores the channel title there for display. No effect on keys
+   *  absent from `partial`: never overwrite `max_entries`/`retention_days` a
+   *  user or an admin may have set. Distinct from `updateSourceConfig` (admin),
+   *  which replaces the whole config. */
   mergeSourceConfig(id: number, partial: Record<string, unknown>): Promise<void>
-  /** Consigne une erreur de collecte dans `log`. */
+  /** Records a collection error in `log`. */
   logConnectorError(
     provider: string,
     repositoryId: number | null,
     error: string,
     executedAt: string,
   ): Promise<void>
-  /** Supprime les lignes d'une source plus vieilles que `retentionDays`.
-   *  Ancien mécanisme, piloté par le connector à chaque run — remplacé par la
-   *  purge centralisée (`purgeExpiredContent`). Conservé pour ne pas casser un
-   *  connector d'une version antérieure. */
+  /** Deletes a source's rows older than `retentionDays`. Old mechanism, driven
+   *  by the connector on every run — replaced by the centralized purge
+   *  (`purgeExpiredContent`). Kept so as not to break an older connector. */
   deleteOldContent(
     provider: string,
     repositoryId: number,
     retentionDays: number,
   ): Promise<void>
 
-  // ── Maintenance : rétention du contenu (admin / cron) ─────────────────────
-  // La purge n'est plus déclenchée par les connectors : un admin fixe un défaut
-  // global et, au besoin, une surcharge par provider ; un cron appelle
+  // ── Maintenance: content retention (admin / cron) ─────────────────────────
+  // The purge is no longer triggered by connectors: an admin sets a global
+  // default and, if needed, a per-provider override; a cron calls
   // `purgeExpiredContent`.
 
-  /** Défaut global de rétention du contenu, en jours. `null` = purge
-   *  automatique désactivée (rien n'est jamais supprimé). Défaut intégré : 30. */
+  /** Global content-retention default, in days. `null` = automatic purge
+   *  disabled (nothing is ever deleted). Built-in default: 30. */
   getContentRetentionDefault(): Promise<number | null>
-  /** Fixe le défaut global. `null` désactive la purge automatique. */
+  /** Sets the global default. `null` disables the automatic purge. */
   setContentRetentionDefault(days: number | null): Promise<void>
-  /** Fixe la surcharge de rétention d'un provider. `null` = suivre le défaut
-   *  global. Sans effet si le provider n'a pas de ligne de registre. */
+  /** Sets a provider's retention override. `null` = follow the global default.
+   *  No effect if the provider has no registry row. */
   setProviderRetention(name: string, days: number | null): Promise<void>
-  /** Supprime le contenu expiré de tous les providers en une passe : chacun
-   *  avec sa surcharge `retention_days` si elle est posée, sinon le défaut
-   *  global. Un provider dont la rétention effective est `null` ou ≤ 0 est
-   *  laissé intact. Renvoie le nombre de lignes supprimées par provider
-   *  (seulement ceux effectivement purgés). */
+  /** Deletes expired content for every provider in one pass: each with its
+   *  `retention_days` override if set, otherwise the global default. A provider
+   *  whose effective retention is `null` or ≤ 0 is left intact. Returns the
+   *  number of rows deleted per provider (only those actually purged). */
   purgeExpiredContent(): Promise<{ provider: string; deleted: number }[]>
 
-  // ── Clés d'API des connectors (admin) ─────────────────────────────────────
+  // ── Connector API keys (admin) ───────────────────────────────────────────
 
-  /** Crée une clé pour un provider. Le secret n'est jamais stocké — seul son
-   *  hash l'est ; c'est l'appelant (la route) qui le génère et le renvoie une
-   *  seule fois. */
+  /** Creates a key for a provider. The secret is never stored — only its hash
+   *  is; the caller (the route) generates it and returns it once. */
   createConnectorKey(input: NewConnectorKey): Promise<{ id: string }>
   listConnectorKeys(): Promise<ConnectorKeyRow[]>
-  /** true si une clé a bien été révoquée (existait, pas déjà révoquée). */
+  /** true if a key was actually revoked (existed, not already revoked). */
   revokeConnectorKey(id: string): Promise<boolean>
-  /** La clé active correspondant à ce hash, ou null (absente ou révoquée). */
+  /** The active key matching this hash, or null (absent or revoked). */
   findConnectorKeyByHash(
     keyHash: string,
   ): Promise<{ id: string; provider: string } | null>
-  /** Met à jour `last_used_at`. Best-effort : un échec ne doit jamais faire
-   *  échouer la requête qu'il accompagne. */
+  /** Updates `last_used_at`. Best-effort: a failure must never fail the request
+   *  it accompanies. */
   touchConnectorKeyUsage(id: string): Promise<void>
 
-  // ── Sources suivies ───────────────────────────────────────────────────────
+  // ── Tracked sources ──────────────────────────────────────────────────────
 
   findSourceByUrl(url: string): Promise<Source | null>
   getSource(id: number): Promise<Source | null>
@@ -332,23 +326,23 @@ export interface DataStore {
     type: string
     config: Record<string, unknown>
   }): Promise<Source>
-  /** Met à jour la config d'une source existante, sans toucher à son type. */
+  /** Updates an existing source's config, without touching its type. */
   updateSourceConfig(id: number, config: Record<string, unknown>): Promise<void>
-  /** Renomme l'URL d'une source existante, sans toucher à son type ni sa
-   *  config. Lève une erreur portant `code: '23505'` si l'URL est déjà prise
-   *  par une autre source. */
+  /** Renames an existing source's URL, without touching its type or config.
+   *  Throws an error carrying `code: '23505'` if the URL is already taken by
+   *  another source. */
   updateSourceUrl(id: number, url: string): Promise<void>
   deleteSource(id: number): Promise<void>
   listSourcesWithSubscriberCount(): Promise<
     (Source & { subscriber_count: string })[]
   >
-  /** Les sources d'un type donné, avec l'état d'abonnement d'un utilisateur. */
+  /** Sources of a given type, with a user's subscription state. */
   listSourcesOfType(
     type: string,
     userId: string,
   ): Promise<(Source & { is_subscribed: boolean })[]>
 
-  // ── Abonnements ───────────────────────────────────────────────────────────
+  // ── Subscriptions ────────────────────────────────────────────────────────
 
   listSubscriptions(userId: string): Promise<SubscriptionRow[]>
   listSubscribedSourceIds(userId: string, type: string): Promise<number[]>
@@ -356,32 +350,32 @@ export interface DataStore {
     linkId: string,
     userId: string,
   ): Promise<{ repository_id: number; type: string } | null>
-  /** Renvoie null si l'abonnement existe déjà. */
+  /** Returns null if the subscription already exists. */
   subscribe(userId: string, sourceId: number): Promise<SubscriptionRow | null>
   unsubscribeById(linkId: string): Promise<void>
   unsubscribe(userId: string, sourceId: number): Promise<boolean>
   deleteSubscriptionsForSource(sourceId: number): Promise<void>
   countSubscribers(sourceId: number): Promise<number>
 
-  // ── Utilisateurs et comptes ───────────────────────────────────────────────
+  // ── Users and accounts ───────────────────────────────────────────────────
 
-  /** Crée l'utilisateur et son compte mot de passe d'un seul tenant. */
+  /** Creates the user and their password account in a single unit. */
   createCredentialUser(user: NewUser): Promise<{ id: string } | null>
 
-  // ── Inscriptions en attente (REGISTRATION_MODE=approval) ──────────────────
-  // Un compte qui attend la validation d'un admin. Tant qu'il est là, il
-  // n'existe pas dans `user` et ne peut pas se connecter.
+  // ── Pending sign-ups (REGISTRATION_MODE=approval) ─────────────────────────
+  // An account awaiting admin approval. While it is there, it does not exist in
+  // `user` and cannot log in.
 
-  /** Enregistre une inscription en attente. Renvoie null si l'e-mail est déjà pris. */
+  /** Records a pending sign-up. Returns null if the e-mail is already taken. */
   createPendingUser(input: NewPendingUser): Promise<{ id: string } | null>
   findPendingUserByEmail(email: string): Promise<PendingUserRow | null>
   listPendingUsers(): Promise<PendingUserRow[]>
   getPendingUser(id: string): Promise<PendingUserRow | null>
-  /** Supprime la ligne (validation faite, ou rejet). false si elle n'existait pas. */
+  /** Deletes the row (approved, or rejected). false if it did not exist. */
   deletePendingUser(id: string): Promise<boolean>
 
-  // ── Bases de données secondaires (admin) ─────────────────────────────────
-  // Bases en lecture seule dont on n'agrège que le contenu connector_*.
+  // ── Secondary databases (admin) ─────────────────────────────────────────
+  // Read-only databases from which only connector_* content is aggregated.
 
   listDataSources(): Promise<DataSourceRow[]>
   createDataSource(input: {
@@ -389,13 +383,13 @@ export interface DataStore {
     engine: string
     urlEnc: string
   }): Promise<{ id: number }>
-  /** Supprime la base et, en cascade, les abonnements externes qui la visaient. */
+  /** Deletes the database and, cascading, the external subscriptions targeting it. */
   deleteDataSource(id: number): Promise<boolean>
 
-  // ── Abonnements à des flux de bases secondaires ──────────────────────────
+  // ── Subscriptions to secondary databases' fluxes ────────────────────────
 
   listExternalSubscriptions(userId: string): Promise<ExternalSubscriptionRow[]>
-  /** Renvoie null si l'abonnement existe déjà. */
+  /** Returns null if the subscription already exists. */
   subscribeExternal(
     userId: string,
     dataSourceId: number,
@@ -417,7 +411,7 @@ export interface DataStore {
   listUsers(): Promise<UserRow[]>
   getUser(userId: string): Promise<UserRow | null>
   userExists(userId: string): Promise<boolean>
-  /** Lève une erreur portant `code: '23505'` si l'e-mail est déjà pris. */
+  /** Throws an error carrying `code: '23505'` if the e-mail is already taken. */
   updateUser(
     userId: string,
     patch: { name?: string; email?: string },
@@ -425,9 +419,9 @@ export interface DataStore {
   updateCredentialPassword(userId: string, passwordHash: string): Promise<void>
   deleteUser(userId: string): Promise<boolean>
 
-  // ── Administrateurs ───────────────────────────────────────────────────────
+  // ── Administrators ───────────────────────────────────────────────────────
 
-  /** Le compte admin correspondant à un e-mail (normalisé), hash inclus. */
+  /** The admin account matching an e-mail (normalized), hash included. */
   findAdminByEmail(email: string): Promise<{
     id: string
     email: string
@@ -437,15 +431,15 @@ export interface DataStore {
   } | null>
   getAdmin(id: string): Promise<AdminRow | null>
   listAdmins(): Promise<AdminRow[]>
-  /** Renvoie null si l'e-mail est déjà pris. */
+  /** Returns null if the e-mail is already taken. */
   createAdmin(admin: NewAdmin): Promise<{ id: string } | null>
-  /** Lève une erreur portant `code: '23505'` si l'e-mail est déjà pris. */
+  /** Throws an error carrying `code: '23505'` if the e-mail is already taken. */
   updateAdmin(
     id: string,
     patch: { name?: string; email?: string; passwordHash?: string },
   ): Promise<void>
   deleteAdmin(id: string): Promise<boolean>
-  /** Nombre de super admins — garde-fou avant d'en retirer un. */
+  /** Number of super admins — a safeguard before removing one. */
   countSuperAdmins(): Promise<number>
 
   findOAuthAccount(
@@ -467,7 +461,7 @@ export interface DataStore {
     userId: string,
   ): Promise<{ name: string; email: string } | null>
 
-  // ── Demandes de flux (file d'approbation, tout provider `manual`) ─────────
+  // ── Flux requests (approval queue, any `manual` provider) ────────────────
 
   findPendingFluxRequest(
     userId: string,
