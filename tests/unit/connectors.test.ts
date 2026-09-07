@@ -110,6 +110,49 @@ describe('GET /connectors/providers', () => {
       },
     ])
   })
+
+  it('keeps template + flux_approval when the retention_days column is missing', async () => {
+    // Régression : un registre créé avant la feature de rétention n'a pas encore
+    // la colonne `retention_days`. Le SELECT complet part en `42703` ; on doit
+    // relire SANS cette colonne — pas retomber sur un registre nu, sinon les
+    // apps perdent icônes et mise en forme.
+    const template = {
+      version: 1,
+      display: { name: 'RSS' },
+      list: { primary: 'title' },
+    }
+    const missingColumn = Object.assign(
+      new Error('column "retention_days" does not exist'),
+      {
+        code: '42703',
+      },
+    )
+    const sql = createSqlMock()
+    sql
+      .mockResolvedValueOnce([{ name: 'rss' }]) // listProviderNames: registeredNames
+      .mockResolvedValueOnce([]) // listProviderNames: namesWithContent
+      .mockRejectedValueOnce(missingColumn) // readRegistry — SELECT … retention_days
+      .mockResolvedValueOnce([
+        {
+          name: 'rss',
+          display_name: 'RSS',
+          sort_order: 30,
+          template,
+          flux_approval: 'manual',
+        },
+      ]) // readRegistry — SELECT sans retention_days
+    vi.mocked(getSql).mockReturnValue(sql as never)
+
+    const res = await app.request(
+      '/connectors/providers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).providers).toEqual([
+      { name: 'rss', displayName: 'RSS', fluxApproval: 'manual', template },
+    ])
+  })
 })
 
 describe('GET /connectors (auth)', () => {

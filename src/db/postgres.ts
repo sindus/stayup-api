@@ -159,6 +159,14 @@ export class PostgresStore implements DataStore {
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
     // `provider_registry` n'appartient pas à l'API : c'est le premier collecteur
     // démarré qui la crée. Son absence n'est pas une erreur, juste un registre vide.
+    //
+    // On dégrade colonne par colonne sur `42703` (colonne absente) : d'abord
+    // sans `retention_days` (registre pas encore migré par un write récent —
+    // surtout ne pas perdre `template` / `flux_approval` au passage, sinon les
+    // apps perdent icônes et mise en forme), puis au strict minimum.
+    const isMissingColumn = (err: unknown) =>
+      (err as { code?: string }).code === '42703'
+
     try {
       return (
         await this.sql<RegistryEntry[]>`
@@ -168,21 +176,28 @@ export class PostgresStore implements DataStore {
         `
       ).map(normalizeRegistryRow)
     } catch (err) {
-      // `42703` = colonne absente : registre antérieur à `template` /
-      // `flux_approval` / `retention_days`, qu'aucune migration n'a encore
-      // retouché. On relit avec le sous-ensemble minimal plutôt que de perdre
-      // les noms affichés.
-      if ((err as { code?: string }).code === '42703') {
-        return this.sql<RegistryEntry[]>`
-          SELECT name, display_name, sort_order
+      if (!isMissingColumn(err)) return []
+    }
+
+    try {
+      return (
+        await this.sql<RegistryEntry[]>`
+          SELECT name, display_name, sort_order, template, flux_approval
           FROM provider_registry
           WHERE name = ANY(${names})
         `
-          .then((rows) => rows.map(normalizeRegistryRow))
-          .catch(() => [])
-      }
-      return []
+      ).map(normalizeRegistryRow)
+    } catch (err) {
+      if (!isMissingColumn(err)) return []
     }
+
+    return this.sql<RegistryEntry[]>`
+      SELECT name, display_name, sort_order
+      FROM provider_registry
+      WHERE name = ANY(${names})
+    `
+      .then((rows) => rows.map(normalizeRegistryRow))
+      .catch(() => [])
   }
 
   async setProviderApproval(

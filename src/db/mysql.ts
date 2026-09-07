@@ -207,17 +207,32 @@ export class MysqlStore implements DataStore {
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
     if (names.length === 0) return []
+    const where = `WHERE name IN (${placeholders(names.length)})`
+
+    // On dégrade colonne par colonne : `retention_days` peut manquer sur un
+    // registre créé avant la feature de rétention et pas encore retouché par un
+    // write. Surtout ne pas retomber directement sur « registre vide » —  les
+    // apps perdraient `template` (icônes + mise en forme) et `flux_approval`.
     try {
       return (
         await this.all<RegistryEntry>(
-          `SELECT name, display_name, sort_order, template, flux_approval, retention_days FROM provider_registry
-           WHERE name IN (${placeholders(names.length)})`,
+          `SELECT name, display_name, sort_order, template, flux_approval, retention_days FROM provider_registry ${where}`,
+          names,
+        )
+      ).map(normalizeRegistryRow)
+    } catch {
+      // colonne ou table absente : on réessaie sans retention_days
+    }
+
+    try {
+      return (
+        await this.all<RegistryEntry>(
+          `SELECT name, display_name, sort_order, template, flux_approval FROM provider_registry ${where}`,
           names,
         )
       ).map(normalizeRegistryRow)
     } catch {
       // Table absente : registre vide, pas une erreur. Voir listProviders().
-      // `template` / `flux_approval` font partie du schéma MySQL dès sa création.
       return []
     }
   }

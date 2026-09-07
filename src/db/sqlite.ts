@@ -171,16 +171,27 @@ export class SqliteStore implements DataStore {
 
   async readRegistry(names: string[]): Promise<RegistryEntry[]> {
     if (names.length === 0) return []
+    const where = `WHERE name IN (${placeholders(names.length)})`
+
+    // `retention_days` peut manquer sur un fichier créé avant la feature de
+    // rétention : on réessaie sans cette colonne plutôt que de renvoyer un
+    // registre vide (les apps perdraient icônes et mise en forme).
     try {
       return this.all<RegistryEntry>(
-        `SELECT name, display_name, sort_order, template, flux_approval, retention_days FROM provider_registry
-         WHERE name IN (${placeholders(names.length)})`,
+        `SELECT name, display_name, sort_order, template, flux_approval, retention_days FROM provider_registry ${where}`,
+        names,
+      ).map(normalizeRegistryRow)
+    } catch {
+      // colonne ou table absente : on réessaie sans retention_days
+    }
+
+    try {
+      return this.all<RegistryEntry>(
+        `SELECT name, display_name, sort_order, template, flux_approval FROM provider_registry ${where}`,
         names,
       ).map(normalizeRegistryRow)
     } catch {
       // Table absente : registre vide, pas une erreur. Voir listProviders().
-      // `template` / `flux_approval` font partie du schéma SQLite dès sa
-      // création — pas de relecture partielle à prévoir ici.
       return []
     }
   }
